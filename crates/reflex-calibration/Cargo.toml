@@ -1,0 +1,14 @@
+[package]
+name = "reflex-calibration"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Calibration engine, reliability metrics, and threshold optimizer for reflex-control"
+
+[dependencies]
+reflex-core = { workspace = true }
+reflex-telemetry = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

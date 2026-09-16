@@ -1,0 +1,15 @@
+[package]
+name = "example-verifier-gate"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reflex-core = { workspace = true }
+reflex-provider = { workspace = true }
+reflex-policy = { workspace = true }
+reflex-telemetry = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }

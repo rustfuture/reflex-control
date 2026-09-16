@@ -1,0 +1,17 @@
+[package]
+name = "reflex-jev"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Jev decision provider implementation for reflex-control"
+
+[dependencies]
+reflex-core = { workspace = true }
+reflex-provider = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

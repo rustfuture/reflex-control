@@ -1,0 +1,28 @@
+[package]
+name = "reflex-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for reflex-control"
+
+[[bin]]
+name = "reflex"
+path = "src/main.rs"
+
+[dependencies]
+reflex-core = { workspace = true }
+reflex-provider = { workspace = true }
+reflex-jev = { workspace = true }
+reflex-policy = { workspace = true }
+reflex-telemetry = { workspace = true }
+reflex-calibration = { workspace = true }
+
+clap = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }

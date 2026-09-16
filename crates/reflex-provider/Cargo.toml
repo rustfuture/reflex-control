@@ -1,0 +1,16 @@
+[package]
+name = "reflex-provider"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Decision provider abstraction and mock provider for reflex-control"
+
+[dependencies]
+reflex-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+tokio = { workspace = true }

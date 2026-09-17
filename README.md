@@ -1,6 +1,6 @@
 # Reflex Control
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 
 Reflex Control is a calibrated System-1 control plane for AI agents. It combines deterministic execution evidence with narrow semantic signals so routine work can proceed cheaply while risky or uncertain work is deferred.
@@ -36,7 +36,7 @@ The frozen thresholds are stored in [`fixtures/frozen_hybrid_config.json`](fixtu
 - small-reasoner ceiling, `0.58`
 - mandatory frontier threshold, `0.70`
 
-## Evaluation result and limits
+## Evaluation results
 
 The strongest existing result is a 100-task held-out, curated synthetic evaluation using live TypeSafe Jev inference. Candidate E resolved 69 tasks autonomously and made no observed frontier-defect leakage errors.
 
@@ -120,13 +120,12 @@ cargo test --release --workspace
 cargo build --release --workspace
 ```
 
-## Known limitations and v0.2 direction
+## Roadmap
 
-- The v0.1 evidence comes from a small synthetic benchmark and does not measure production reliability or domain shift.
-- Live provider latency, availability, and output can vary between runs.
-- Thresholds must be validated on local shadow-mode telemetry before production use.
-- v0.2 is expected to add alternative evidence providers, OpenTelemetry export, and broader evaluation on real workloads.
+- Broaden evaluation with real-world workloads and domain-shift scenarios.
+- Calibrate thresholds using local shadow-mode telemetry.
+- Add alternative evidence providers and OpenTelemetry export.
 
 ## License
 
-Licensed under either the Apache License, Version 2.0, or the MIT license, at your option. See [`LICENSE`](LICENSE), [`LICENSE-APACHE`](LICENSE-APACHE), and [`LICENSE-MIT`](LICENSE-MIT).
+Licensed under the [MIT License](LICENSE).

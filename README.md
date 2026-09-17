@@ -1,105 +1,56 @@
 # Reflex Control
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
+[![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Reflex Control is a calibrated System-1 control plane for AI agents. It combines deterministic execution evidence with narrow semantic signals so routine work can proceed cheaply while risky or uncertain work is deferred.
+A Rust policy engine for AI agent runtimes. It decides whether an agent should continue, retry, accept a result, request verification, or escalate to a stronger model.
 
-## v0.1 architecture
+Reflex Control combines deterministic checks with signals from [TypeSafe Jev](https://typesafe.ai). Jev evaluates narrow statements about the current task—such as whether a failure is transient or a change carries security risk—and returns structured evidence. Safety rules always take precedence over model confidence.
 
-Candidate E, the **Guarded Hybrid**, is the frozen default architecture for v0.1. It is an experimental release candidate backed by a synthetic evaluation; it is not a production-proven safety system.
+## How it works
 
-TypeSafe Jev is used only as an **atomic semantic evidence provider**. It estimates 11 narrow conditions such as `security_risk`, `failure_is_transient`, `worker_out_of_scope`, `objective_satisfied`, and `independent_verification_needed`. Jev does not orchestrate the agent and cannot override deterministic safety rules.
+The default **Guarded Hybrid** policy combines:
 
-```mermaid
-flowchart TD
-    A[Task context and deterministic evidence] --> B[Atomic Jev signals]
-    A --> C[Guarded Hybrid composer]
-    B --> C
-    C -->|hard safety veto| D[Frontier or human review]
-    C -->|transient failure within retry budget| E[Retry]
-    C -->|safe work remains| F[Continue]
-    C -->|clean result inside safe envelope| G[Accept or terminate]
-    C -->|borderline evidence| H[Verifier]
-```
+- deterministic evidence such as test status, retry count, and changed files;
+- atomic task signals from TypeSafe Jev;
+- calibrated thresholds for acceptance and model routing.
 
-The three policy layers are:
+Every decision and its eventual outcome can be stored in SQLite for inspection, calibration, and shadow-mode evaluation. The frozen v0.1 policy is available in [`fixtures/frozen_hybrid_config.json`](fixtures/frozen_hybrid_config.json).
 
-1. Deterministic and security vetoes. Failed tests, exhausted retries, security hazards, and scope violations cannot be bypassed by a learned score.
-2. Safe progression. Incomplete, low-risk work may continue; transient failures may retry within a fixed budget.
-3. Calibrated acceptance. Only tasks inside the safe envelope are evaluated with the clean-quality score.
-
-The frozen thresholds are stored in [`fixtures/frozen_hybrid_config.json`](fixtures/frozen_hybrid_config.json):
-
-- maximum composite risk for autonomous acceptance, `tau_accept = 0.28`
-- clean-quality threshold, `theta_clean = 0.38`
-- small-reasoner ceiling, `0.58`
-- mandatory frontier threshold, `0.70`
-
-## Evaluation results
-
-The strongest existing result is a 100-task held-out, curated synthetic evaluation using live TypeSafe Jev inference. Candidate E resolved 69 tasks autonomously and made no observed frontier-defect leakage errors.
-
-| Measure | Candidate E result | Definition |
-| :--- | :---: | :--- |
-| Autonomous coverage | 69/100 (69%) | `accept`, `terminate`, `retry`, or `continue` without a verifier/frontier call |
-| Frontier calls avoided | 69/100 (69%) | tasks that did not call the frontier tier |
-| Defect leakage / FNR | 0/31 (0%) | frontier-required tasks that did not reach the frontier tier |
-| False alarms / FPR | 0/69 (0%) | non-frontier tasks unnecessarily sent to the frontier tier |
-| Unsafe-to-accept tasks | 43/100 | 31 frontier-required tasks plus 12 transient tasks that required `retry` |
-
-The 95% Wilson interval for 69/100 coverage is approximately 59.4%–77.2%. With 0 observed leakage events among 31 frontier-required tasks, the 95% Wilson upper bound is approximately 11.0% and the one-sided 95% Clopper-Pearson upper bound is approximately 9.2%. Zero observed errors therefore does not establish a true 0% risk rate.
-
-The fixtures are synthetic and curated, with explicit ground truth and a controlled class distribution. Their timestamps are synthetic scenario data, not collection dates. Live Jev inference was used for the reported blind run, but the tasks are not production traffic. Historical experiments and raw outputs are preserved under [`docs/experiments/`](docs/experiments/).
-
-Metric terms are used consistently throughout the current evaluator:
-
-- **False accept rate (FAR):** defective autonomous accepts divided by all autonomous accepts/terminations.
-- **False negative rate (FNR) / defect leakage:** frontier-required tasks that missed frontier review divided by all frontier-required tasks.
-- **False positive rate (FPR) / false alarm rate:** non-frontier tasks sent to frontier review divided by all non-frontier tasks.
-
-## Workspace
-
-```text
-crates/reflex-core          Domain types and evidence model
-crates/reflex-provider      Provider abstractions and mock provider
-crates/reflex-jev           TypeSafe Jev client and atomic evidence provider
-crates/reflex-policy        Guarded Hybrid and supporting policies
-crates/reflex-telemetry     SQLite telemetry and outcome linkage
-crates/reflex-calibration   Metrics, confidence intervals, and calibration
-crates/reflex-cli           reflex command-line interface
-examples/                   Runnable verifier-gate and shadow-mode examples
-fixtures/                   Synthetic evaluation fixtures and frozen config
-docs/experiments/           Archived research history and raw reports
-```
-
-## Install and run
+## Quick start
 
 Rust 1.88 or newer is required.
 
 ```bash
 cargo install --path crates/reflex-cli
 reflex init
+reflex run --provider mock \
+  --context "Check whether this worker patch is safe" \
+  --risk low
 ```
 
-Mock mode does not require credentials:
+Mock mode runs locally without credentials. To use TypeSafe Jev, set `JEV_API_KEY` and select the `jev` provider:
 
 ```bash
-reflex run --provider mock --context "Check whether the worker patch is safe" --risk low
+export JEV_API_KEY="your_key"
+reflex run --provider jev \
+  --context "Add docstrings and verify the test suite" \
+  --risk low
 ```
 
-For live TypeSafe Jev inference, copy [`.env.example`](.env.example) or export the key without committing it:
+## Evaluation
 
-```bash
-export JEV_API_KEY="your_typesafe_jev_api_key"
-reflex run --provider jev --context "Add docstrings and verify the test suite" --risk low
-```
+The included held-out benchmark contains 100 curated synthetic tasks. With the frozen v0.1 configuration, Reflex Control handled 69 tasks without a frontier call and routed all 31 frontier-required tasks correctly.
 
-Live evaluation commands call the TypeSafe API and may incur cost. The release evaluation can be reproduced with the frozen configuration, but normal development and CI use local fixtures and mock providers:
+| Result | v0.1 |
+| --- | ---: |
+| Autonomous coverage | 69% |
+| Frontier-required tasks routed correctly | 31/31 |
+| Observed defect leakage | 0/31 |
+| Observed false alarms | 0/69 |
 
-```bash
-reflex experiment --version v2 --phase blind --provider jev
-```
+This benchmark is reproducible, but it is synthetic and should not be read as a production reliability claim. The datasets and raw reports are in [`fixtures/`](fixtures/) and [`docs/experiments/`](docs/experiments/).
 
 ## Examples
 
@@ -108,24 +59,22 @@ cargo run -p example-verifier-gate
 cargo run -p example-shadow-mode
 ```
 
-The verifier-gate example demonstrates a clean autonomous pass and a hard security veto. The shadow-mode example records a prediction without changing the host orchestrator's decision. See [`examples/README.md`](examples/README.md).
+The first example shows autonomous acceptance and a hard security veto. The second records decisions beside an existing agent loop without changing its behavior. See [`examples/README.md`](examples/README.md) for details.
 
-## Quality gates
+## Development
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test --release --workspace
-cargo build --release --workspace
 ```
+
+The workspace contains separate crates for the core model, providers, policy, telemetry, calibration, and CLI. CI runs on Linux, macOS, and Windows with Rust 1.88 and stable.
 
 ## Roadmap
 
-- Broaden evaluation with real-world workloads and domain-shift scenarios.
-- Calibrate thresholds using local shadow-mode telemetry.
-- Add alternative evidence providers and OpenTelemetry export.
+The next release will focus on real-workload evaluation, shadow-mode calibration, additional evidence providers, and OpenTelemetry export.
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

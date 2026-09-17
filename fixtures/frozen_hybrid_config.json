@@ -1,0 +1,9 @@
+{
+  "winning_candidate": "Candidate E (Guarded Hybrid Architecture)",
+  "optimal_tau_accept": 0.28,
+  "clean_quality_accept_threshold": 0.38,
+  "max_risk_small_reasoner": 0.58,
+  "mandatory_frontier_risk": 0.7,
+  "timestamp": "2026-09-17T15:55:39.291022+00:00",
+  "validation_notes": "Frozen after DEV, VALIDATION, and CALIBRATION sweep. Zero false accepts and zero FNR observed on calibration."
+}

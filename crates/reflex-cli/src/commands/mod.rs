@@ -1,6 +1,7 @@
 pub mod benchmark;
 pub mod calibrate;
 pub mod demo;
+pub mod experiment;
 pub mod init;
 pub mod inspect;
 pub mod pareto;

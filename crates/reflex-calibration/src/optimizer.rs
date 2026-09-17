@@ -1,4 +1,5 @@
 use crate::metrics::DecisionOutcomePair;
+use crate::stats::{wilson_score_interval, ConfidenceInterval};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,7 +33,12 @@ pub struct OptimizationResult {
     pub expected_cost_reduction_pct: f64,
     pub expected_false_accept_rate: f64,
     pub expected_false_negative_rate: f64,
+    pub far_ci: ConfidenceInterval,
+    pub fnr_ci: ConfidenceInterval,
+    pub coverage_ci: ConfidenceInterval,
+    pub calls_avoided_ci: ConfidenceInterval,
     pub is_feasible: bool,
+    pub is_statistically_proven: bool,
     pub explanation: String,
 }
 
@@ -44,7 +50,10 @@ pub struct ParetoPoint {
     pub cost_reduction_pct: f64,
     pub false_accept_rate: f64,
     pub false_negative_rate: f64,
+    pub far_ci: ConfidenceInterval,
+    pub fnr_ci: ConfidenceInterval,
     pub is_target_met: bool,
+    pub is_statistically_proven: bool,
     pub is_pareto_optimal: bool,
 }
 
@@ -52,15 +61,20 @@ pub struct ThresholdOptimizer;
 
 impl ThresholdOptimizer {
     /// Evaluate metrics for a specific threshold cutoff tau
-    pub fn evaluate_cutoff(pairs: &[DecisionOutcomePair], tau: f64) -> (f64, f64, f64, f64, f64) {
+    /// Returns: (coverage, far, fnr, calls_avoided_pct, cost_reduction_pct, accepted_failed, accepted_total, total_actual_failures, calls_avoided)
+    pub fn evaluate_cutoff(
+        pairs: &[DecisionOutcomePair],
+        tau: f64,
+    ) -> (f64, f64, f64, f64, f64, usize, usize, usize, usize) {
         if pairs.is_empty() {
-            return (0.0, 0.0, 0.0, 0.0, 0.0);
+            return (0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0);
         }
         let n = pairs.len() as f64;
         let mut accepted_total = 0usize;
         let mut accepted_failed = 0usize;
         let mut total_actual_failures = 0usize;
         let mut escalated_total = 0usize;
+        let mut cheap_verified_resolved = 0usize;
 
         for p in pairs {
             let actual_success = p.is_success();
@@ -74,7 +88,17 @@ impl ThresholdOptimizer {
                 if !actual_success {
                     accepted_failed += 1;
                 }
-            } else if p.confidence < 0.65 {
+            } else if p.confidence >= 0.65 {
+                // Tier 2: fast cheap verifier ($0.005)
+                if actual_success {
+                    // Fast verifier successfully confirms clean outcome, avoiding frontier LLM
+                    cheap_verified_resolved += 1;
+                } else {
+                    // Fast verifier catches defect and escalates to frontier model
+                    escalated_total += 1;
+                }
+            } else {
+                // Low confidence: immediate frontier escalation
                 escalated_total += 1;
             }
         }
@@ -91,19 +115,33 @@ impl ThresholdOptimizer {
             0.0
         };
 
-        let calls_avoided_pct = ((n - escalated_total as f64) / n) * 100.0;
+        // Mathematically correct frontier calls avoided:
+        // Tasks accepted directly (no verifier) + tasks resolved clean by cheap verifier.
+        // Defective tasks in cheap verify tier escalate to frontier model.
+        let calls_avoided = accepted_total + cheap_verified_resolved;
+        let calls_avoided_pct = (calls_avoided as f64 / n) * 100.0;
 
         let baseline_cost = n * 0.02;
-        let reflex_cost = (n * 0.0001)
-            + (escalated_total as f64 * 0.02)
-            + ((n - accepted_total as f64 - escalated_total as f64).max(0.0) * 0.005);
+        let reflex_cost = (accepted_total as f64 * 0.0001)
+            + (cheap_verified_resolved as f64 * (0.0001 + 0.005))
+            + (escalated_total as f64 * (0.0001 + 0.02));
         let cost_reduction_pct = if baseline_cost > 0.0 {
             ((baseline_cost - reflex_cost) / baseline_cost) * 100.0
         } else {
             0.0
         };
 
-        (coverage, far, fnr, calls_avoided_pct, cost_reduction_pct)
+        (
+            coverage,
+            far,
+            fnr,
+            calls_avoided_pct,
+            cost_reduction_pct,
+            accepted_failed,
+            accepted_total,
+            total_actual_failures,
+            calls_avoided,
+        )
     }
 
     pub fn optimize(
@@ -111,6 +149,7 @@ impl ThresholdOptimizer {
         constraints: &OptimizationConstraints,
     ) -> OptimizationResult {
         if pairs.is_empty() {
+            let default_ci = ConfidenceInterval::default();
             return OptimizationResult {
                 current_threshold: constraints.current_threshold,
                 current_coverage: 0.0,
@@ -122,12 +161,17 @@ impl ThresholdOptimizer {
                 expected_cost_reduction_pct: 0.0,
                 expected_false_accept_rate: 0.0,
                 expected_false_negative_rate: 0.0,
+                far_ci: default_ci,
+                fnr_ci: default_ci,
+                coverage_ci: default_ci,
+                calls_avoided_ci: default_ci,
                 is_feasible: false,
+                is_statistically_proven: false,
                 explanation: "Dataset is empty; cannot optimize threshold.".to_string(),
             };
         }
 
-        let (curr_cov, curr_far, curr_fnr, _, _) =
+        let (curr_cov, curr_far, curr_fnr, _, _, _, _, _, _) =
             Self::evaluate_cutoff(pairs, constraints.current_threshold);
 
         // Search candidate thresholds from 0.500 to 0.995 in steps of 0.001
@@ -140,7 +184,7 @@ impl ThresholdOptimizer {
         let mut step = 500;
         while step <= 995 {
             let tau = step as f64 / 1000.0;
-            let (cov, far, fnr, _, _) = Self::evaluate_cutoff(pairs, tau);
+            let (cov, far, fnr, _, _, _, _, _, _) = Self::evaluate_cutoff(pairs, tau);
 
             let satisfies_safety = far <= constraints.max_false_accept_rate
                 && fnr <= constraints.max_false_negative_rate;
@@ -173,21 +217,55 @@ impl ThresholdOptimizer {
             step += 1;
         }
 
-        let (exp_cov, exp_far, exp_fnr, exp_calls_avoided, exp_cost_red) =
-            Self::evaluate_cutoff(pairs, best_threshold);
+        let (
+            exp_cov,
+            exp_far,
+            exp_fnr,
+            exp_calls_avoided,
+            exp_cost_red,
+            exp_accepted_failed,
+            exp_accepted_total,
+            exp_total_actual_failures,
+            exp_calls_avoided_count,
+        ) = Self::evaluate_cutoff(pairs, best_threshold);
+
+        let far_ci = wilson_score_interval(exp_accepted_failed, exp_accepted_total, 0.95);
+        let fnr_ci = wilson_score_interval(exp_accepted_failed, exp_total_actual_failures, 0.95);
+        let coverage_ci = wilson_score_interval(exp_accepted_total, pairs.len(), 0.95);
+        let calls_avoided_ci = wilson_score_interval(exp_calls_avoided_count, pairs.len(), 0.95);
+
+        let is_statistically_proven = far_ci
+            .is_upper_bound_proven(constraints.max_false_accept_rate)
+            && fnr_ci.is_upper_bound_proven(constraints.max_false_negative_rate);
 
         let explanation = if found_feasible {
+            let proven_tag = if is_statistically_proven {
+                format!(
+                    "Statistically proven <{:.1}% at 95% confidence (FAR upper: {:.2}%, FNR upper: {:.2}%).",
+                    constraints.max_false_accept_rate * 100.0,
+                    far_ci.upper * 100.0,
+                    fnr_ci.upper * 100.0
+                )
+            } else {
+                format!(
+                    "Early signal only: sample size (N={}) yields 95% CI upper bound of {:.2}% FAR (insufficient to formally prove <{:.1}%).",
+                    exp_accepted_total,
+                    far_ci.upper * 100.0,
+                    constraints.max_false_accept_rate * 100.0
+                )
+            };
             format!(
-                "Optimal calibrated threshold is {:.3}. Meets FAR <= {:.2}%, FNR <= {:.2}%, with {:.1}% coverage ({:.1}% verifier calls avoided).",
+                "Optimal calibrated threshold is {:.3}. Observed FAR = {:.2}%, observed FNR = {:.2}%, with {:.1}% coverage ({:.1}% verifier calls avoided). {}",
                 best_threshold,
-                constraints.max_false_accept_rate * 100.0,
-                constraints.max_false_negative_rate * 100.0,
+                exp_far * 100.0,
+                exp_fnr * 100.0,
                 exp_cov * 100.0,
-                exp_calls_avoided
+                exp_calls_avoided,
+                proven_tag
             )
         } else {
             format!(
-                "Recommended best-effort safety threshold is {:.3} (FAR: {:.2}%, FNR: {:.2}%, Coverage: {:.1}%).",
+                "Recommended best-effort safety threshold is {:.3} (observed FAR: {:.2}%, observed FNR: {:.2}%, Coverage: {:.1}%).",
                 best_threshold,
                 exp_far * 100.0,
                 exp_fnr * 100.0,
@@ -206,7 +284,12 @@ impl ThresholdOptimizer {
             expected_cost_reduction_pct: exp_cost_red,
             expected_false_accept_rate: exp_far,
             expected_false_negative_rate: exp_fnr,
+            far_ci,
+            fnr_ci,
+            coverage_ci,
+            calls_avoided_ci,
             is_feasible: found_feasible,
+            is_statistically_proven,
             explanation,
         }
     }
@@ -224,7 +307,12 @@ impl ThresholdOptimizer {
         let mut points: Vec<ParetoPoint> = candidate_steps
             .iter()
             .map(|&tau| {
-                let (cov, far, fnr, calls_avoided, cost_red) = Self::evaluate_cutoff(pairs, tau);
+                let (cov, far, fnr, calls_avoided, cost_red, acc_failed, acc_total, total_fail, _) =
+                    Self::evaluate_cutoff(pairs, tau);
+                let far_ci = wilson_score_interval(acc_failed, acc_total, 0.95);
+                let fnr_ci = wilson_score_interval(acc_failed, total_fail, 0.95);
+                let is_statistically_proven =
+                    far_ci.is_upper_bound_proven(0.01) && fnr_ci.is_upper_bound_proven(0.01);
                 let is_target_met = far <= 0.01 && fnr <= 0.01 && calls_avoided >= 40.0;
                 ParetoPoint {
                     threshold: tau,
@@ -233,7 +321,10 @@ impl ThresholdOptimizer {
                     cost_reduction_pct: cost_red,
                     false_accept_rate: far,
                     false_negative_rate: fnr,
+                    far_ci,
+                    fnr_ci,
                     is_target_met,
+                    is_statistically_proven,
                     is_pareto_optimal: false,
                 }
             })

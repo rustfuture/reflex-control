@@ -31,7 +31,7 @@ pub async fn execute_verifier_gate(db_path: String) -> Result<(), Box<dyn std::e
     let mut rng = rand::thread_rng();
 
     for i in 1..=total_tasks {
-        let task_id = format!("task-gate-{:04}", i);
+        let task_id = format!("task-gate-{i:04}");
 
         // Simulation distribution:
         // ~61.7% routine high-confidence low-risk code diffs
@@ -88,6 +88,10 @@ pub async fn execute_verifier_gate(db_path: String) -> Result<(), Box<dyn std::e
             ReflexAction::Escalate
             | ReflexAction::Reject
             | ReflexAction::Retry
+            | ReflexAction::Terminate
+            | ReflexAction::Continue
+            | ReflexAction::DeferToSmallReasoner
+            | ReflexAction::DeferToFrontier
             | ReflexAction::Custom(_) => {
                 frontier_verified += 1;
                 reflex_total_cost += 0.0001 + 0.029; // System-1 + frontier verifier
@@ -129,19 +133,19 @@ pub async fn execute_verifier_gate(db_path: String) -> Result<(), Box<dyn std::e
     };
     let cost_reduction = ((baseline_cost - reflex_total_cost) / baseline_cost) * 100.0;
 
-    println!("Tasks processed:        {:>5}", total_tasks);
+    println!("Tasks processed:        {total_tasks:>5}");
     println!();
-    println!("Auto accepted:          {:>5}", auto_accepted);
-    println!("Cheap verified:         {:>5}", cheap_verified);
-    println!("Frontier verified:      {:>5}", frontier_verified);
+    println!("Auto accepted:          {auto_accepted:>5}");
+    println!("Cheap verified:         {cheap_verified:>5}");
+    println!("Frontier verified:      {frontier_verified:>5}");
     println!();
-    println!("False accepts:          {:>5}", false_accepts);
-    println!("False accept rate:       {:>5.2}%", false_accept_rate);
+    println!("False accepts:          {false_accepts:>5}");
+    println!("False accept rate:       {false_accept_rate:>5.2}%");
     println!();
-    println!("Baseline cost:          ${:>5.2}", baseline_cost);
-    println!("Reflex cost:             ${:>5.2}", reflex_total_cost);
+    println!("Baseline cost:          ${baseline_cost:>5.2}");
+    println!("Reflex cost:             ${reflex_total_cost:>5.2}");
     println!();
-    println!("Cost reduction:          {:>5.1}%", cost_reduction);
+    println!("Cost reduction:          {cost_reduction:>5.1}%");
     println!("Median latency:          -41%");
 
     Ok(())

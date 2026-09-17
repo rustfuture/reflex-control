@@ -1,0 +1,68 @@
+HISTORICAL RAW OUTPUT - repeated pre-Guarded-Hybrid formulation experiment; not v0.1 release evidence.
+================= Reflex Control Benchmark Runner =================
+Provider:       Jev (LIVE API)
+Endpoint:       https://api.typesafe.ai/v1/systemone
+Model:          jev-latest
+Session ID:     session-live-jev-df643d22-9660-4bf1-843e-b1871631ebb1
+Telemetry Store:reflex.db
+Dataset:        fixtures/benchmark_100_live.json
+Executing benchmark across 100 tasks (Live Network Calls: YES)...
+───────────────────────────────────────────────────────────────────
+Evaluated:    5/100 | Last latency:  285ms | Avg: 423.6msEvaluated:   10/100 | Last latency:  274ms | Avg: 372.9msEvaluated:   15/100 | Last latency:  290ms | Avg: 366.9msEvaluated:   20/100 | Last latency:  339ms | Avg: 366.9msEvaluated:   25/100 | Last latency:  302ms | Avg: 358.3msEvaluated:   30/100 | Last latency:  301ms | Avg: 352.0msEvaluated:   35/100 | Last latency:  424ms | Avg: 360.4msEvaluated:   40/100 | Last latency:  325ms | Avg: 354.2msEvaluated:   45/100 | Last latency:  291ms | Avg: 351.4msEvaluated:   50/100 | Last latency:  296ms | Avg: 348.1msEvaluated:   55/100 | Last latency:  470ms | Avg: 347.7msEvaluated:   60/100 | Last latency:  305ms | Avg: 346.3msEvaluated:   65/100 | Last latency:  398ms | Avg: 345.5msEvaluated:   70/100 | Last latency:  347ms | Avg: 343.9msEvaluated:   75/100 | Last latency:  282ms | Avg: 345.3msEvaluated:   80/100 | Last latency:  295ms | Avg: 343.6msEvaluated:   85/100 | Last latency:  303ms | Avg: 340.9msEvaluated:   90/100 | Last latency:  313ms | Avg: 340.7msEvaluated:   95/100 | Last latency:  306ms | Avg: 338.6msEvaluated:  100/100 | Last latency:  320ms | Avg: 336.6ms
+───────────────────────────────────────────────────────────────────
+
+==================== LIVE INFERENCE BENCHMARK REPORT ====================
+Evaluated Architecture:         Jev (LIVE API)
+Evaluation Mode:                LIVE HTTP API INFERENCE
+Evaluated Tasks:                100
+Ground Truth Defects:           25 (25.00%)
+API Latency (p50/p95/avg):      311 ms / 470 ms / 336.6 ms
+Total Wall-Clock Time:          34.23 s
+Real Inference Cost:            $0.001371 (using actual Jev usage)
+
+--- Verification & Reliability Metrics (Strictly from Live Inferences) ---
+  Accuracy:                     25.00%
+  Brier Score:                  0.4038  (lower is better, 0 = perfect)
+  Expected Calib. Error (ECE):  0.4480
+  Automation Coverage:          2.00% [95% CI: 0.55% – 7.00%]
+  Projected Frontier Calls Avoided: 68.00% [95% CI: 58.34% – 76.33%]
+  All Verifier Calls Avoided:   2.00%
+
+--- Confusion Matrix (Threshold = 0.90) ---
+                        [Actual Success]  [Actual Defect]
+  [Predicted Success]                1                1
+  [Predicted Defect]                74               24
+
+
+  Observed False Accept Rate:   50.00% [95% CI: 9.45% – 90.55%]
+  Observed False Negative Rate: 4.00% [95% CI: 0.71% – 19.54%]
+
+--- Statistical Proof & Rigor (<1.0% Target at 95% Confidence) ---
+  [EARLY SIGNAL ONLY] Observed FAR is 50.00%, but 95% upper bound is 90.55% >= 1.00%. Sample size (N=100) yields upper bound insufficient to formally guarantee <1.00%.
+
+--- Calibration View (Confidence vs Observed Outcomes) ---
+Bucket Range   Count   Mean Conf   Observed Success   Calib Gap
+─────────────────────────────────────────────────────────────────
+0.00 - 0.20        17         8.7%           70.6%         0.6188
+0.20 - 0.40        63        30.0%           76.2%         0.4617
+0.40 - 0.60        11        51.5%           63.6%         0.1218
+0.60 - 0.80         6        64.7%          100.0%         0.3533
+0.80 - 1.00         3        93.0%           66.7%         0.2633
+
+--- Disaggregated Performance by Slice ---
+Slice Type       | Subcategory      | Count | Defect |   Brier |    ECE | Coverage |     FAR |     FNR
+─────────────────────────────────────────────────────────────────────────────────────────────────
+decision_type    | retry            |    25 |      5 |  0.5324 | 0.6040 |     8.0% |  50.00% |  20.00%
+decision_type    | routing          |    25 |     10 |  0.2771 | 0.2088 |     0.0% |   0.00% |   0.00%
+decision_type    | termination      |    25 |      5 |  0.4088 | 0.4920 |     0.0% |   0.00% |   0.00%
+decision_type    | verification     |    25 |      5 |  0.3967 | 0.4872 |     0.0% |   0.00% |   0.00%
+risk_level       | high             |    30 |     10 |  0.3710 | 0.4183 |     0.0% |   0.00% |   0.00%
+risk_level       | low              |    45 |     10 |  0.4295 | 0.4802 |     4.4% |  50.00% |  10.00%
+risk_level       | medium           |    25 |      5 |  0.3967 | 0.4872 |     0.0% |   0.00% |   0.00%
+category         | api_integration  |    17 |      3 |  0.4619 | 0.5900 |    11.8% |  50.00% |  33.33%
+category         | code_gen         |    19 |      3 |  0.4394 | 0.5158 |     0.0% |   0.00% |   0.00%
+category         | devops_infra     |    17 |      4 |  0.3643 | 0.4476 |     0.0% |   0.00% |   0.00%
+category         | docs             |    14 |      6 |  0.3378 | 0.2693 |     0.0% |   0.00% |   0.00%
+category         | sql_query        |    14 |      4 |  0.4893 | 0.5129 |     0.0% |   0.00% |   0.00%
+category         | test_repair      |    19 |      5 |  0.3370 | 0.3974 |     0.0% |   0.00% |   0.00%
+=================================================================================================

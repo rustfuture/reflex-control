@@ -1,0 +1,7 @@
+{
+  "routing": "A",
+  "retry": "B",
+  "termination": "B",
+  "verification": "A",
+  "verification_threshold": 0.4
+}

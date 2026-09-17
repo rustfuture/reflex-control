@@ -24,7 +24,7 @@ pub fn execute(decision_id_str: String, db_path: String) -> Result<(), Box<dyn s
     println!("Type:         {}", dec.decision_type);
     println!("Context:      {}", dec.context);
     if let Some(ref tid) = dec.task_id {
-        println!("Task ID:      {}", tid);
+        println!("Task ID:      {tid}");
     }
     println!("Selected:     {}", dec.selected);
     println!("Confidence:   {:.4}", dec.confidence);
@@ -40,7 +40,7 @@ pub fn execute(decision_id_str: String, db_path: String) -> Result<(), Box<dyn s
         println!("Source:       {}", out.source);
         println!("Verified At:  {}", out.verified_at.to_rfc3339());
         if let Some(details) = out.details {
-            println!("Details:      {}", details);
+            println!("Details:      {details}");
         }
 
         let is_accurate = match out.result {

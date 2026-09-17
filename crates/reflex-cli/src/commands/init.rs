@@ -33,7 +33,7 @@ pub fn execute() -> Result<(), Box<dyn std::error::Error>> {
 
     let db_path = "reflex.db";
     let _store = TelemetryStore::open(db_path)?;
-    println!("  Initialized telemetry database: {}", db_path);
+    println!("  Initialized telemetry database: {db_path}");
 
     println!("\nReflex Control initialized successfully!");
     println!("Try running:");

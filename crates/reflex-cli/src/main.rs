@@ -49,11 +49,11 @@ enum Commands {
     /// Generate Cost vs Risk Pareto Frontier analysis
     Pareto(ParetoArgs),
 
-    /// Run benchmark comparing Reflex vs frontier/small models
-    Benchmark {
-        #[arg(long, default_value_t = 1000)]
-        tasks: usize,
-    },
+    /// Run benchmark comparing Reflex vs frontier/small models or live Jev evaluation
+    Benchmark(BenchmarkArgs),
+
+    /// Run empirical 4-way evaluation on fresh datasets across sequential phases
+    Experiment(commands::experiment::ExperimentArgs),
 
     /// Run interactive demos
     Demo {
@@ -85,9 +85,9 @@ struct RunArgs {
 
 #[derive(Subcommand, Debug)]
 enum ShadowSubcommands {
-    /// Run shadow mode on verified agent task dataset or simulation
+    /// Run shadow mode on an evaluation dataset or simulation
     Run {
-        /// Path to verified agent tasks JSON dataset
+        /// Path to an evaluation task JSON dataset
         #[arg(short, long)]
         dataset: Option<String>,
 
@@ -107,7 +107,7 @@ enum ShadowSubcommands {
 
 #[derive(Args, Debug)]
 struct CalibrateArgs {
-    /// Path to verified agent tasks JSON dataset
+    /// Path to an evaluation task JSON dataset
     #[arg(short, long)]
     dataset: Option<String>,
 
@@ -123,15 +123,45 @@ struct CalibrateArgs {
     #[arg(long, default_value_t = 0.90)]
     threshold: f64,
 
+    /// Stratify dataset into Train 50% / Val 25% / Held-Out Test 25%
+    #[arg(long, default_value_t = true)]
+    split: bool,
+
     #[arg(long, default_value = "reflex.db")]
     db: String,
 }
 
 #[derive(Args, Debug)]
 struct ParetoArgs {
-    /// Path to verified agent tasks JSON dataset
+    /// Path to an evaluation task JSON dataset
     #[arg(short, long)]
     dataset: Option<String>,
+
+    #[arg(long, default_value = "reflex.db")]
+    db: String,
+}
+
+#[derive(Args, Debug)]
+struct BenchmarkArgs {
+    /// Provider to benchmark: 'jev' (Live API) or 'mock' (Synthetic)
+    #[arg(short, long, default_value = "mock")]
+    provider: String,
+
+    /// Path to benchmark dataset JSON
+    #[arg(short, long)]
+    dataset: Option<String>,
+
+    /// Maximum number of tasks to evaluate (0 = all)
+    #[arg(long, default_value_t = 0)]
+    tasks: usize,
+
+    /// Formulation variant: 'a', 'b', 'frozen', or 'compare'
+    #[arg(long, default_value = "a")]
+    formulation: String,
+
+    /// Custom verification threshold override
+    #[arg(long)]
+    threshold: Option<f64>,
 
     #[arg(long, default_value = "reflex.db")]
     db: String,
@@ -186,14 +216,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 args.max_false_negative,
                 args.min_coverage,
                 args.threshold,
+                args.split,
                 args.db,
             )?;
         }
         Commands::Pareto(args) => {
             commands::pareto::execute(args.dataset, args.db)?;
         }
-        Commands::Benchmark { tasks } => {
-            commands::benchmark::execute(tasks)?;
+        Commands::Benchmark(args) => {
+            commands::benchmark::execute(
+                args.provider,
+                args.dataset,
+                args.tasks,
+                args.formulation,
+                args.threshold,
+                args.db,
+            )
+            .await?;
+        }
+        Commands::Experiment(args) => {
+            commands::experiment::execute(args).await?;
         }
         Commands::Demo { sub } => match sub {
             DemoSubcommands::VerifierGate { db } => {

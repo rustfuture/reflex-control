@@ -5,3 +5,6 @@ target/
 *.log
 .DS_Store
 reflex.toml
+.env
+.env.*
+!.env.example

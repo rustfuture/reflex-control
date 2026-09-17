@@ -44,8 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     store.record_shadow(&record)?;
 
-    println!("Orchestrator Action: {}", orchestrator_action);
-    println!("Reflex Shadow Pred:  {}", predicted_action);
+    println!("Orchestrator Action: {orchestrator_action}");
+    println!("Reflex Shadow Pred:  {predicted_action}");
     println!("Confidence:          {:.4}", resp.decision.confidence);
     println!("Reflex Latency:      {} ms", resp.latency_ms);
     println!("Reflex Cost:         ${:.6}", resp.cost_estimate);

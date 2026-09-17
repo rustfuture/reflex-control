@@ -2,9 +2,11 @@
 name = "reflex-provider"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Decision provider abstraction and mock provider for reflex-control"
+publish.workspace = true
 
 [dependencies]
 reflex-core = { workspace = true }

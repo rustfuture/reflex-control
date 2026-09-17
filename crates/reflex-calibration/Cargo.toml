@@ -2,9 +2,11 @@
 name = "reflex-calibration"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Calibration engine, reliability metrics, and threshold optimizer for reflex-control"
+publish.workspace = true
 
 [dependencies]
 reflex-core = { workspace = true }

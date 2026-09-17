@@ -2,9 +2,11 @@
 name = "reflex-jev"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Jev decision provider implementation for reflex-control"
+publish.workspace = true
 
 [dependencies]
 reflex-core = { workspace = true }

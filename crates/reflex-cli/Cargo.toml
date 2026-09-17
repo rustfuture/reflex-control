@@ -2,9 +2,11 @@
 name = "reflex-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Command-line interface for reflex-control"
+publish.workspace = true
 
 [[bin]]
 name = "reflex"

@@ -6,6 +6,7 @@ use reflex_provider::{DecisionProvider, MockProvider};
 use reflex_telemetry::{DecisionRecord, TelemetryStore};
 use std::str::FromStr;
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub async fn execute(
     provider_name: String,
@@ -18,17 +19,32 @@ pub async fn execute(
     let risk_level = RiskLevel::from_str(&risk).unwrap_or(RiskLevel::Low);
     let store = TelemetryStore::open(&db_path)?;
 
-    let mut obs = Observation::new(&context).with_risk(risk_level);
-    if let Some(ref tid) = task_id {
-        obs = obs.with_task_id(tid);
-    }
+    let is_live_jev = provider_name.to_lowercase() == "jev";
 
-    let provider: Arc<dyn DecisionProvider> = if provider_name.to_lowercase() == "jev" {
-        let config = JevConfig::default();
+    let (provider_label, provider_tag, session_prefix): (&str, &str, &str) = if is_live_jev {
+        ("Jev (LIVE API)", "jev-live", "session-live-jev")
+    } else {
+        ("Mock/Synthetic", "mock-synthetic", "session-synthetic")
+    };
+
+    println!("================ Reflex Control Decision Execution ================");
+    println!("Provider:       {provider_label}");
+
+    let provider: Arc<dyn DecisionProvider> = if is_live_jev {
+        let config = JevConfig::from_env()?;
+        println!("Endpoint:       {}", config.endpoint);
+        println!("Model:          {}", config.model);
         Arc::new(JevProvider::new(config))
     } else {
         Arc::new(MockProvider::new())
     };
+
+    let session_id = format!("{}-{}", session_prefix, Uuid::new_v4());
+    let effective_task_id = task_id.unwrap_or_else(|| session_id.clone());
+
+    let obs = Observation::new(&context)
+        .with_risk(risk_level)
+        .with_task_id(&effective_task_id);
 
     let req = if let Some(opts) = options {
         DecisionRequest::new(DecisionType::Choice, obs.clone(), opts)
@@ -36,7 +52,10 @@ pub async fn execute(
         DecisionRequest::probability(obs.clone())
     };
 
-    println!("Evaluating decision with provider: {}", provider.name());
+    println!("Task ID:        {effective_task_id}");
+    println!("Risk Level:     {}", obs.risk_level);
+    println!("Evaluating decision...");
+
     let resp = provider.evaluate(&req).await?;
 
     let policy_config = PolicyConfig::default();
@@ -45,21 +64,25 @@ pub async fn execute(
 
     println!("\n=== Decision Result ===");
     println!("Decision ID:    {}", resp.request_id);
-    println!("Provider:       {}", resp.provider);
+    println!("Provider:       {provider_label}");
     println!("Selected:       {}", resp.decision.selected);
     println!("Confidence:     {:.4}", resp.decision.confidence);
-    println!("Risk Level:     {}", obs.risk_level);
-    println!("Policy Action:  {}", action);
+    println!("Probabilities:  {:?}", resp.decision.probabilities);
+    println!("Policy Action:  {action}");
     println!("Latency:        {} ms", resp.latency_ms);
-    println!("Estimated Cost: ${:.6}", resp.cost_estimate);
+    if resp.cost_estimate > 0.0 {
+        println!("Estimated Cost: ${:.6}", resp.cost_estimate);
+    } else {
+        println!("Estimated Cost: unknown (TypeSafe Jev token pricing not officially published)");
+    }
 
     let rec = DecisionRecord {
         id: resp.request_id.clone(),
         timestamp: Utc::now(),
-        provider: resp.provider.clone(),
+        provider: provider_tag.to_string(),
         decision_type: format!("{:?}", req.decision_type),
         context: obs.context.clone(),
-        task_id: obs.task_id.clone(),
+        task_id: Some(effective_task_id),
         selected: resp.decision.selected.clone(),
         confidence: resp.decision.confidence,
         probabilities_json: serde_json::to_string(&resp.decision.probabilities)?,
@@ -70,7 +93,8 @@ pub async fn execute(
     };
 
     store.record_decision(&rec)?;
-    println!("\nDecision recorded in telemetry: {}", db_path);
+    println!("\nTelemetry Record Stored: {db_path} (session: {session_id})");
+    println!("====================================================================");
 
     Ok(())
 }

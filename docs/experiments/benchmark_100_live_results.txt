@@ -1,0 +1,129 @@
+HISTORICAL RAW OUTPUT - pre-Guarded-Hybrid formulation experiment; not v0.1 release evidence.
+================= Reflex Control Benchmark Runner =================
+Provider:       Jev (LIVE API)
+Endpoint:       https://api.typesafe.ai/v1/systemone
+Model:          jev-latest
+Session ID:     session-live-jev-5adcae5e-e7c5-445c-89dc-91406222ce80
+Telemetry Store:reflex.db
+Dataset:        fixtures/benchmark_100_live.json
+Executing benchmark across 100 tasks (Live Network Calls: YES)...
+───────────────────────────────────────────────────────────────────
+Evaluated:    5/100 | Last latency:  294ms | Avg: 392.4msEvaluated:   10/100 | Last latency:  261ms | Avg: 341.0msEvaluated:   15/100 | Last latency:  323ms | Avg: 330.4msEvaluated:   20/100 | Last latency:  380ms | Avg: 345.9msEvaluated:   25/100 | Last latency:  258ms | Avg: 330.3msEvaluated:   30/100 | Last latency:  257ms | Avg: 323.2msEvaluated:   35/100 | Last latency:  382ms | Avg: 326.8msEvaluated:   40/100 | Last latency:  262ms | Avg: 318.8msEvaluated:   45/100 | Last latency:  311ms | Avg: 322.4msEvaluated:   50/100 | Last latency:  282ms | Avg: 318.5msEvaluated:   55/100 | Last latency:  337ms | Avg: 317.1msEvaluated:   60/100 | Last latency:  274ms | Avg: 313.9msEvaluated:   65/100 | Last latency:  263ms | Avg: 312.5msEvaluated:   70/100 | Last latency:  252ms | Avg: 310.7msEvaluated:   75/100 | Last latency:  325ms | Avg: 311.6msEvaluated:   80/100 | Last latency:  289ms | Avg: 312.7msEvaluated:   85/100 | Last latency:  252ms | Avg: 310.8msEvaluated:   90/100 | Last latency:  322ms | Avg: 309.9msEvaluated:   95/100 | Last latency:  290ms | Avg: 307.8msEvaluated:  100/100 | Last latency:  265ms | Avg: 306.8ms
+───────────────────────────────────────────────────────────────────
+
+==================== LIVE INFERENCE BENCHMARK REPORT ====================
+Evaluated Architecture:         Jev (LIVE API)
+Evaluation Mode:                LIVE HTTP API INFERENCE
+Evaluated Tasks:                100
+API Latency (p50/p95/avg):      283 ms / 456 ms / 306.8 ms
+Total Wall-Clock Time:          31.30 s
+Real Inference Cost:            $0.001372 (using actual TypeSafe Jev token usage: $0.042/1M tokens)
+=========================================================================
+
+-------------------- [1] ROUTING DECISION EVALUATION --------------------
+Jev Primitive:                  Choice (options: accept, verify, escalate)
+Evaluated Routing Tasks:        25
+Routing Accuracy:               32.00%
+Routing Macro-F1:               0.2563
+
+--- Per-Class Performance ---
+Class        | Support | Precision |  Recall | F1 Score
+-----------------------------------------------------------
+accept       |      10 |     44.4% |   40.0% |   0.4211
+escalate     |       8 |      0.0% |    0.0% |   0.0000
+verify       |       7 |     25.0% |   57.1% |   0.3478
+
+--- Multiclass Confusion Matrix (Routing) ---
+                        Actual ->
+Predicted                     accept        verify      escalate    Pred Total
+------------------------------------------------------------------------------
+accept                             4             3             2             9
+verify                             6             4             6            16
+escalate                           0             0             0             0
+------------------------------------------------------------------------------
+Actual Total                      10             7             8            25
+-------------------------------------------------------------------------
+
+-------------------- [2] RETRY DECISION EVALUATION ----------------------
+Jev Primitive:                  Choice (options: retry, escalate, terminate)
+Evaluated Retry Tasks:          25
+Retry Accuracy:                 60.00%
+Retry Macro-F1:                 0.3289
+
+--- Per-Class Performance ---
+Class        | Support | Precision |  Recall | F1 Score
+-----------------------------------------------------------
+escalate     |       3 |      0.0% |    0.0% |   0.0000
+retry        |       2 |     16.7% |   50.0% |   0.2500
+terminate    |      20 |     77.8% |   70.0% |   0.7368
+
+--- Multiclass Confusion Matrix (Retry) ---
+                        Actual ->
+Predicted                      retry      escalate     terminate    Pred Total
+------------------------------------------------------------------------------
+retry                              1             0             5             6
+escalate                           0             0             1             1
+terminate                          1             3            14            18
+------------------------------------------------------------------------------
+Actual Total                       2             3            20            25
+-------------------------------------------------------------------------
+
+------------------ [3] TERMINATION DECISION EVALUATION ------------------
+Jev Primitive:                  Noul (scalar P(terminate), key: should_terminate)
+Evaluated Termination Tasks:    25
+Termination Accuracy:           20.00%
+Precision (terminate):          0.00%
+Recall (terminate):             0.00%
+F1 Score (terminate):           0.0000
+Brier Score (P(terminate)):     0.4496
+Expected Calib. Error (ECE):    0.5344
+
+--- Binary Confusion Matrix (Termination) ---
+                        [Actual terminate]    [Actual continue]
+  [Predicted terminate]                0                  0
+  [Predicted continue ]               20                  5
+-------------------------------------------------------------------------
+
+----------- [4] SAFETY-CRITICAL VERIFICATION GATE EVALUATION ------------
+Jev Primitive:                  Noul (scalar P(clean), key: is_valid)
+Decision Rule:                  Skip verification if P(clean) >= 0.80, else Verify (defect flagged)
+Evaluated Verification Tasks:   25
+Defect Detection Accuracy:      20.00%
+Defect Precision:               20.00%
+Defect Recall (Catch Rate):     100.00%
+Defect F1 Score:                0.3333
+Brier Score (P(clean)):         0.3907
+Expected Calib. Error (ECE):    0.4832
+
+--- Safety & Call Avoidance Rates ---
+  Observed False Accept Rate:   0.00% [95% CI: 0.00% – 100.00%]
+    (Missed defects accepted / Total autonomous passes)
+  Observed False Alarm Rate:    100.00% [95% CI: 83.89% – 100.00%]
+    (Unnecessary verifications / Total actual clean tasks)
+  Observed Automation Coverage: 0.00% [95% CI: 0.00% – 13.32%]
+  Projected Frontier Avoided:   0.00% [95% CI: 0.00% – 13.32%]
+
+--- Binary Confusion Matrix (Verification Gate) ---
+                        [Actual defect (verify)]    [Actual clean (skip)]
+  [Predicted defect (verify)]                5                 20
+  [Predicted clean (skip)]                0                  0
+
+--- Statistical Proof & Rigor (<1.0% Target at 95% Confidence) ---
+  [EARLY SIGNAL ONLY] Observed FAR is 0.00%, but 95% upper bound is 100.00% >= 1.00%. Sample size (N=25) yields upper bound insufficient to formally guarantee <1.00%.
+
+--- Empirical Verification Threshold Sweep (Data-Driven, No Assumptions) ---
+Threshold | Accuracy |      FAR |      FNR | Precision |   Recall |       F1 | Coverage
+----------------------------------------------------------------------------------
+     0.10 |    80.0% |   20.00% |    0.00% |      0.0% |     0.0% |   0.0000 |   100.0%
+     0.20 |    80.0% |   20.00% |    0.00% |      0.0% |     0.0% |   0.0000 |   100.0%
+     0.30 |    68.0% |   12.50% |   30.00% |     33.3% |    60.0% |   0.4286 |    64.0%
+     0.40 |    24.0% |    0.00% |   95.00% |     20.8% |   100.0% |   0.3448 |     4.0%
+     0.50 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+     0.60 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+     0.70 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+     0.80 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+     0.90 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+     0.95 |    20.0% |    0.00% |  100.00% |     20.0% |   100.0% |   0.3333 |     0.0%
+-------------------------------------------------------------------------
+
+========================== END OF BENCHMARK REPORT ==========================

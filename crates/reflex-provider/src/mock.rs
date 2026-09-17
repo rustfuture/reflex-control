@@ -182,8 +182,41 @@ impl DecisionProvider for MockProvider {
         }
 
         let p_true = self.compute_heuristic_prob(&request.observation.context);
-        let selected = p_true >= 0.5;
-        let decision = Decision::binary(selected, p_true);
+        let is_termination = request.options.iter().any(|o| o == "terminate");
+        let decision = if is_termination {
+            let sel = if p_true >= 0.5 {
+                "terminate"
+            } else {
+                "continue"
+            };
+            let conf = if p_true >= 0.5 { p_true } else { 1.0 - p_true };
+            Decision::new(
+                sel,
+                vec![
+                    ("terminate".to_string(), p_true),
+                    ("continue".to_string(), 1.0 - p_true),
+                ],
+                conf,
+            )
+        } else if request
+            .options
+            .iter()
+            .any(|o| o == "clean" || o == "defect")
+        {
+            let sel = if p_true >= 0.5 { "clean" } else { "defect" };
+            let conf = if p_true >= 0.5 { p_true } else { 1.0 - p_true };
+            Decision::new(
+                sel,
+                vec![
+                    ("clean".to_string(), p_true),
+                    ("defect".to_string(), 1.0 - p_true),
+                ],
+                conf,
+            )
+        } else {
+            let selected = p_true >= 0.5;
+            Decision::binary(selected, p_true)
+        };
 
         Ok(DecisionResponse::new(
             request.id.clone(),
@@ -192,6 +225,126 @@ impl DecisionProvider for MockProvider {
             self.simulated_latency_ms,
             self.simulated_cost,
         ))
+    }
+}
+
+/// Mock atomic evidence provider for local testing and simulations
+#[derive(Clone)]
+pub struct MockEvidenceProvider {
+    name: String,
+    fixed_signals: std::collections::HashMap<String, f64>,
+    simulated_latency_ms: u64,
+}
+
+impl Default for MockEvidenceProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MockEvidenceProvider {
+    pub fn new() -> Self {
+        Self {
+            name: "mock-evidence".to_string(),
+            fixed_signals: std::collections::HashMap::new(),
+            simulated_latency_ms: 5,
+        }
+    }
+
+    pub fn with_signal(mut self, name: impl Into<String>, prob: f64) -> Self {
+        self.fixed_signals.insert(name.into(), prob.clamp(0.0, 1.0));
+        self
+    }
+}
+
+#[async_trait]
+impl crate::provider::AtomicEvidenceProvider for MockEvidenceProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn evaluate_evidence(
+        &self,
+        context: &str,
+        requested_signals: &[&str],
+    ) -> Result<crate::provider::EvidenceEvaluationResponse, ProviderError> {
+        let ctx_lower = context.to_lowercase();
+        let mut signals = Vec::new();
+
+        for &sig in requested_signals {
+            let prob = if let Some(&p) = self.fixed_signals.get(sig) {
+                p
+            } else {
+                match sig {
+                    reflex_core::SIGNAL_FAILURE_IS_TRANSIENT => {
+                        if ctx_lower.contains("429")
+                            || ctx_lower.contains("timeout")
+                            || ctx_lower.contains("rate limit")
+                        {
+                            0.90
+                        } else {
+                            0.10
+                        }
+                    }
+                    reflex_core::SIGNAL_REQUIREMENTS_ARE_AMBIGUOUS => {
+                        if ctx_lower.contains("unclear") || ctx_lower.contains("ambiguous") {
+                            0.80
+                        } else {
+                            0.15
+                        }
+                    }
+                    reflex_core::SIGNAL_SECURITY_RISK => {
+                        if ctx_lower.contains("injection")
+                            || ctx_lower.contains("vulnerability")
+                            || ctx_lower.contains("leak")
+                        {
+                            0.85
+                        } else {
+                            0.05
+                        }
+                    }
+                    reflex_core::SIGNAL_REQUIRED_WORK_REMAINING => {
+                        if ctx_lower.contains("incomplete")
+                            || ctx_lower.contains("pending")
+                            || ctx_lower.contains("failing")
+                        {
+                            0.80
+                        } else {
+                            0.10
+                        }
+                    }
+                    reflex_core::SIGNAL_OBJECTIVE_SATISFIED => {
+                        if ctx_lower.contains("passed") || ctx_lower.contains("success") {
+                            0.90
+                        } else {
+                            0.20
+                        }
+                    }
+                    reflex_core::SIGNAL_INDEPENDENT_VERIFICATION_NEEDED => {
+                        if ctx_lower.contains("verify") || ctx_lower.contains("high risk") {
+                            0.75
+                        } else {
+                            0.20
+                        }
+                    }
+                    _ => 0.50,
+                }
+            };
+
+            signals.push(reflex_core::SemanticEvidence::new(
+                sig,
+                prob,
+                &self.name,
+                self.simulated_latency_ms,
+            ));
+        }
+
+        Ok(crate::provider::EvidenceEvaluationResponse {
+            signals,
+            latency_ms: self.simulated_latency_ms,
+            cost_estimate: 0.0,
+            input_tokens: 100,
+        })
     }
 }
 

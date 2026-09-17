@@ -15,10 +15,11 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["Reflex Control Authors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/reflex-control/reflex-control"
 description = "A calibrated System-1 control plane for AI agents and swarms"
+publish = false
 
 [workspace.dependencies]
 reflex-core = { path = "crates/reflex-core" }

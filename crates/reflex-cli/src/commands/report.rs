@@ -6,7 +6,7 @@ pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let pairs = store.list_paired_decisions()?;
 
     if pairs.is_empty() {
-        println!("No telemetry decisions found in {}", db_path);
+        println!("No telemetry decisions found in {db_path}");
         println!("Run some decisions first with: reflex run or reflex demo verifier-gate");
         return Ok(());
     }
@@ -53,32 +53,32 @@ pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("================ Reflex Control Telemetry Report ================");
-    println!("Total Decisions:         {}", total);
-    println!("Average Decision Latency: {:.1} ms", avg_latency);
-    println!("Total Estimated Cost:    ${:.4}", total_cost);
-    println!("Baseline Frontier Cost:  ${:.4}", baseline_frontier_cost);
+    println!("Total Decisions:         {total}");
+    println!("Average Decision Latency: {avg_latency:.1} ms");
+    println!("Total Estimated Cost:    ${total_cost:.4}");
+    println!("Baseline Frontier Cost:  ${baseline_frontier_cost:.4}");
     println!("Projected Cost Savings:  {:.1}%", cost_reduction.max(0.0));
 
     println!("\n--- Actions Breakdown ---");
     for (action, cnt) in &actions_count {
         let pct = (*cnt as f64 / total as f64) * 100.0;
-        println!("  {:14} : {:5} ({:5.1}%)", action, cnt, pct);
+        println!("  {action:14} : {cnt:5} ({pct:5.1}%)");
     }
 
     println!("\n--- Provider Breakdown ---");
     for (prov, cnt) in &providers_count {
         let pct = (*cnt as f64 / total as f64) * 100.0;
-        println!("  {:14} : {:5} ({:5.1}%)", prov, cnt, pct);
+        println!("  {prov:14} : {cnt:5} ({pct:5.1}%)");
     }
 
     println!("\n--- Outcome Verification ---");
-    println!("Total Verified:          {}", verified_count);
+    println!("Total Verified:          {verified_count}");
     if verified_count > 0 {
-        println!("  Success:               {}", success_count);
-        println!("  Failure:               {}", failure_count);
-        println!("  False Accepts:         {}", false_accepts);
+        println!("  Success:               {success_count}");
+        println!("  Failure:               {failure_count}");
+        println!("  False Accepts:         {false_accepts}");
         let far = (false_accepts as f64 / verified_count as f64) * 100.0;
-        println!("  False Accept Rate:     {:.2}%", far);
+        println!("  False Accept Rate:     {far:.2}%");
     } else {
         println!("  No outcomes linked yet. Outcomes are recorded via testing, CI, or verifiers.");
     }

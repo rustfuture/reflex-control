@@ -3,5 +3,5 @@ pub mod mock;
 pub mod provider;
 
 pub use error::ProviderError;
-pub use mock::MockProvider;
-pub use provider::DecisionProvider;
+pub use mock::{MockEvidenceProvider, MockProvider};
+pub use provider::{AtomicEvidenceProvider, DecisionProvider, EvidenceEvaluationResponse};

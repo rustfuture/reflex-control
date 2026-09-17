@@ -1,6 +1,8 @@
 use chrono::Utc;
 use rand::Rng;
-use reflex_calibration::{CalibrationCurve, CalibrationMetrics, DecisionOutcomePair};
+use reflex_calibration::{
+    wilson_score_interval, CalibrationCurve, CalibrationMetrics, DecisionOutcomePair,
+};
 use reflex_core::{DecisionId, DecisionRequest, Observation, Outcome, OutcomeSource, RiskLevel};
 use reflex_policy::PolicyConfig;
 use reflex_provider::{DecisionProvider, MockProvider};
@@ -14,8 +16,31 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
+pub struct DatasetMetadata {
+    pub source: String,
+    #[serde(default)]
+    pub is_production_telemetry: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub sample_count: usize,
+    #[serde(default)]
+    pub defect_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DatasetWrapper {
+    #[serde(default)]
+    pub metadata: Option<DatasetMetadata>,
+    pub tasks: Vec<VerifiedAgentTask>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct VerifiedAgentTask {
     pub task_id: String,
+    #[serde(default = "default_decision_type")]
+    pub decision_type: String,
     #[serde(default)]
     pub category: String,
     pub context: String,
@@ -29,6 +54,10 @@ pub struct VerifiedAgentTask {
     pub latency_ms: u64,
     #[serde(default = "default_cost")]
     pub cost_estimate: f64,
+}
+
+fn default_decision_type() -> String {
+    "verification".to_string()
 }
 
 fn default_orchestrator_action() -> String {
@@ -55,7 +84,9 @@ pub async fn run_shadow(
     let policy = policy_config.build_policy();
 
     let target_dataset = dataset_path.unwrap_or_else(|| {
-        if Path::new("fixtures/real_agent_worker_tasks.json").exists() {
+        if Path::new("fixtures/benchmark_dataset_5000.json").exists() {
+            "fixtures/benchmark_dataset_5000.json".to_string()
+        } else if Path::new("fixtures/real_agent_worker_tasks.json").exists() {
             "fixtures/real_agent_worker_tasks.json".to_string()
         } else {
             String::new()
@@ -63,12 +94,27 @@ pub async fn run_shadow(
     });
 
     if !target_dataset.is_empty() && Path::new(&target_dataset).exists() {
-        println!(
-            "Running Shadow Mode on verified agent task dataset: {}",
-            target_dataset
-        );
+        println!("Running Shadow Mode on evaluation dataset: {target_dataset}");
         let raw = fs::read_to_string(&target_dataset)?;
-        let tasks: Vec<VerifiedAgentTask> = serde_json::from_str(&raw)?;
+
+        let (tasks, metadata): (Vec<VerifiedAgentTask>, Option<DatasetMetadata>) =
+            if let Ok(wrapper) = serde_json::from_str::<DatasetWrapper>(&raw) {
+                (wrapper.tasks, wrapper.metadata)
+            } else {
+                let parsed: Vec<VerifiedAgentTask> = serde_json::from_str(&raw)?;
+                (parsed, None)
+            };
+
+        if let Some(meta) = metadata {
+            println!(
+                "Provenance Classification: {} (Synthetic Benchmark Fixture, NOT Production Telemetry)",
+                meta.source
+            );
+        } else {
+            println!(
+                "Provenance Classification: Curated Benchmark Fixture [Hand-curated fixture, NOT production telemetry]"
+            );
+        }
 
         let limit = if count > 0 && count < tasks.len() {
             count
@@ -114,7 +160,7 @@ pub async fn run_shadow(
                 id: dec_id.clone(),
                 timestamp: Utc::now(),
                 provider: "reflex-system1".to_string(),
-                decision_type: "probability".to_string(),
+                decision_type: task.decision_type.clone(),
                 context: task.context,
                 task_id: Some(task.task_id),
                 selected: resp.decision.selected,
@@ -137,23 +183,18 @@ pub async fn run_shadow(
             let _ = store.record_outcome(&out_record);
         }
 
-        println!(
-            "Successfully evaluated and recorded {} real agent worker tasks to shadow telemetry!",
-            limit
-        );
-        println!("Run 'reflex shadow report' to inspect the verified metrics.");
+        println!("Successfully evaluated and recorded {limit} agent tasks to shadow telemetry!");
+        println!("Run 'reflex shadow report' to inspect the recorded metrics.");
         return Ok(());
     }
 
-    // Fallback simulation if no real dataset file is provided
-    println!(
-        "No verified dataset file found. Running Shadow Mode on {} synthetic tasks...",
-        count
-    );
+    // Fallback simulation if no dataset file is provided
+    println!("No verified dataset file found. Running Shadow Mode on {count} synthetic tasks...");
+    println!("Note: Simulation mode uses purely synthetic data (NOT production telemetry).");
     let mut rng = rand::thread_rng();
 
     for i in 1..=count {
-        let task_id = format!("task-shadow-{:04}", i);
+        let task_id = format!("task-shadow-{i:04}");
         let is_routine = rng.gen_bool(0.70);
         let actual_action = if is_routine { "accept" } else { "verify" };
         let final_outcome = if is_routine {
@@ -199,10 +240,7 @@ pub async fn run_shadow(
         store.record_shadow(&record)?;
     }
 
-    println!(
-        "Completed {} shadow mode evaluations and recorded to telemetry!",
-        count
-    );
+    println!("Completed {count} shadow mode evaluations and recorded to telemetry!");
     println!("Run 'reflex shadow report' to view shadow comparison metrics.");
 
     Ok(())
@@ -210,7 +248,7 @@ pub async fn run_shadow(
 
 pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let store = TelemetryStore::open(&db_path)?;
-    let records = store.list_shadow_records(5000)?;
+    let records = store.list_shadow_records(10000)?;
 
     if records.is_empty() {
         println!("No shadow records found in {db_path}.");
@@ -222,7 +260,8 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut pairs = Vec::new();
     let mut agreements = 0;
     let mut reflex_accepted = 0;
-    let mut reflex_verified = 0;
+    let mut reflex_verified_clean = 0;
+    let mut reflex_verified_defect = 0;
     let mut reflex_escalated = 0;
     let mut orchestrator_accepted = 0;
     let mut reflex_total_cost = 0.0;
@@ -232,7 +271,6 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut actual_defects = 0usize;
     let mut false_accepts = 0usize;
-    let mut false_negatives = 0usize;
 
     for r in &records {
         let actual_is_accept = r.actual_action.to_lowercase() == "accept";
@@ -242,14 +280,27 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
             agreements += 1;
         }
 
+        let is_success = r.final_outcome.map(|o| o.is_success()).unwrap_or(true);
+        if !is_success {
+            actual_defects += 1;
+        }
+
         match r.predicted_action {
             reflex_core::ReflexAction::Accept => {
                 reflex_accepted += 1;
                 reflex_total_cost += 0.0001; // System-1 reflex cost
+                if !is_success {
+                    false_accepts += 1;
+                }
             }
             reflex_core::ReflexAction::Verify => {
-                reflex_verified += 1;
-                reflex_total_cost += 0.0001 + 0.005; // System-1 + fast verifier
+                if is_success {
+                    reflex_verified_clean += 1;
+                    reflex_total_cost += 0.0001 + 0.005; // Cheap verifier verified clean
+                } else {
+                    reflex_verified_defect += 1;
+                    reflex_total_cost += 0.0001 + 0.005 + 0.02; // Cheap verifier caught defect -> escalated to frontier
+                }
             }
             _ => {
                 reflex_escalated += 1;
@@ -264,13 +315,6 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
         reflex_total_latency += r.latency_ms;
 
         if let Some(outcome) = r.final_outcome {
-            if !outcome.is_success() {
-                actual_defects += 1;
-            }
-            if pred_is_accept && !outcome.is_success() {
-                false_accepts += 1;
-                false_negatives += 1;
-            }
             pairs.push(DecisionOutcomePair::new(
                 r.confidence,
                 r.predicted_action.clone(),
@@ -291,23 +335,19 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
         / orchestrator_latency_avg_ms as f64)
         * 100.0;
 
-    let calls_avoided = total.saturating_sub(reflex_escalated);
-    let calls_avoided_pct = (calls_avoided as f64 / total as f64) * 100.0;
-
-    let false_accept_rate = if reflex_accepted > 0 {
-        (false_accepts as f64 / reflex_accepted as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    let false_negative_rate = if actual_defects > 0 {
-        (false_negatives as f64 / actual_defects as f64) * 100.0
-    } else {
-        0.0
-    };
+    // Mathematically verified frontier calls avoided:
+    // Avoided frontier calls = tasks autonomously accepted + tasks cheap verified clean without escalation.
+    // Tasks that are directly escalated OR cheap verified with defect escalate to the frontier model.
+    let frontier_calls_avoided = reflex_accepted + reflex_verified_clean;
+    let frontier_avoided_ci = wilson_score_interval(frontier_calls_avoided, total, 0.95);
+    let coverage_ci = wilson_score_interval(reflex_accepted, total, 0.95);
+    let far_ci = wilson_score_interval(false_accepts, reflex_accepted, 0.95);
+    let fnr_ci = wilson_score_interval(false_accepts, actual_defects, 0.95);
 
     println!("================= Reflex Shadow Mode Verification Report =================");
-    println!("Evaluated Agent Tasks:      {}", total);
+    println!("Evaluated Shadow Tasks:     {total}");
+    println!("Telemetry Store:            {db_path}");
+    println!("Data Nature:                Shadow Pipeline Telemetry (Fixture / Agent Runs)");
     println!(
         "Agreement with Orchestrator: {:.1}% (Orchestrator Accepts: {})",
         (agreements as f64 / total as f64) * 100.0,
@@ -316,50 +356,52 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("--- Decision Breakdown ---");
     println!(
-        "  Autonomous Accepted:      {:>4} ({:5.1}%)",
+        "  Autonomous Accepted:      {:>5} ({:5.1}%)",
         reflex_accepted,
         (reflex_accepted as f64 / total as f64) * 100.0
     );
     println!(
-        "  Cheap Verified:           {:>4} ({:5.1}%)",
-        reflex_verified,
-        (reflex_verified as f64 / total as f64) * 100.0
+        "  Cheap Verified (Clean):   {:>5} ({:5.1}%)",
+        reflex_verified_clean,
+        (reflex_verified_clean as f64 / total as f64) * 100.0
     );
     println!(
-        "  Frontier Escalated:       {:>4} ({:5.1}%)",
+        "  Cheap Verified (Defect):  {:>5} ({:5.1}%) -> Escalated to Frontier",
+        reflex_verified_defect,
+        (reflex_verified_defect as f64 / total as f64) * 100.0
+    );
+    println!(
+        "  Direct Frontier Escalated:{:>5} ({:5.1}%)",
         reflex_escalated,
         (reflex_escalated as f64 / total as f64) * 100.0
     );
     println!();
-    println!("--- Verification & Reliability Metrics ---");
-    println!("  Total Ground Truth Defects: {}", actual_defects);
-    println!("  False Accepts (Accepted Defect): {}", false_accepts);
-    println!("  False Accept Rate (FAR):    {:5.2}%", false_accept_rate);
-    println!("  False Negative Rate (FNR):  {:5.2}%", false_negative_rate);
+    println!("--- Verification & Reliability Metrics (95% Confidence Intervals) ---");
+    println!("  Total Ground Truth Defects: {actual_defects}");
+    println!("  False Accepts (Accepted Defect): {false_accepts}");
+    println!("  Observed False Accept Rate: {}", far_ci.format_pct());
+    println!("  Observed False Negative Rate: {}", fnr_ci.format_pct());
     println!(
         "  Brier Score:                {:.4}  (lower is better)",
         metrics.brier_score
     );
     println!("  Expected Calib. Error (ECE): {:.4}", metrics.ece);
+    println!("  Automation Coverage:        {}", coverage_ci.format_pct());
     println!(
-        "  Automation Coverage:        {:5.1}%",
-        (reflex_accepted as f64 / total as f64) * 100.0
+        "  Frontier Calls Avoided:     {}",
+        frontier_avoided_ci.format_pct()
     );
     println!(
-        "  Frontier Calls Avoided:     {:>4} / {} ({:5.1}%)",
-        calls_avoided, total, calls_avoided_pct
+        "  All Verifier Calls Avoided: {:.2}% (Autonomous zero-verifier coverage)",
+        (reflex_accepted as f64 / total as f64) * 100.0
     );
     println!();
     println!("--- Economic & Latency Impact ---");
+    println!("  Baseline Cost (All Frontier): ${orchestrator_total_cost:.4}");
+    println!("  Reflex Control System-1 Cost: ${reflex_total_cost:.4}");
+    println!("  Cost Reduction:              {cost_savings:5.1}%");
     println!(
-        "  Baseline Cost (All Frontier): ${:.4}",
-        orchestrator_total_cost
-    );
-    println!("  Reflex Control System-1 Cost: ${:.4}", reflex_total_cost);
-    println!("  Cost Reduction:              {:5.1}%", cost_savings);
-    println!(
-        "  Median/Avg Latency Reduction: {:5.1}% ({}ms -> {:.1}ms)",
-        latency_reduction, orchestrator_latency_avg_ms, reflex_avg_latency
+        "  Median/Avg Latency Reduction: {latency_reduction:5.1}% ({orchestrator_latency_avg_ms}ms -> {reflex_avg_latency:.1}ms)"
     );
 
     println!("\n--- Calibration View (Confidence Buckets vs Verified Outcomes) ---");

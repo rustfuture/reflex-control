@@ -1,337 +1,132 @@
 # Reflex Control
 
-[![CI](https://github.com/reflex-control/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/reflex-control/reflex-control/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust: 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 
-**A calibrated System-1 control plane for AI agents and swarms.**
+Reflex Control is a calibrated System-1 control plane for AI agents. It combines deterministic execution evidence with narrow semantic signals so routine work can proceed cheaply while risky or uncertain work is deferred.
 
----
+## v0.1 architecture
 
-## 1. Project Goal
+Candidate E, the **Guarded Hybrid**, is the frozen default architecture for v0.1. It is an experimental release candidate backed by a synthetic evaluation; it is not a production-proven safety system.
 
-`reflex-control` reduces unnecessary reliance on expensive, high-latency reasoning models in agentic systems.
+TypeSafe Jev is used only as an **atomic semantic evidence provider**. It estimates 11 narrow conditions such as `security_risk`, `failure_is_transient`, `worker_out_of_scope`, `objective_satisfied`, and `independent_verification_needed`. Jev does not orchestrate the agent and cannot override deterministic safety rules.
 
-Instead of invoking a frontier deliberative LLM for every single routing, retry, verification, termination, or risk decision, Reflex Control introduces a fast, lightweight, and calibrated probabilistic decision layer:
+```mermaid
+flowchart TD
+    A[Task context and deterministic evidence] --> B[Atomic Jev signals]
+    A --> C[Guarded Hybrid composer]
+    B --> C
+    C -->|hard safety veto| D[Frontier or human review]
+    C -->|transient failure within retry budget| E[Retry]
+    C -->|safe work remains| F[Continue]
+    C -->|clean result inside safe envelope| G[Accept or terminate]
+    C -->|borderline evidence| H[Verifier]
+```
+
+The three policy layers are:
+
+1. Deterministic and security vetoes. Failed tests, exhausted retries, security hazards, and scope violations cannot be bypassed by a learned score.
+2. Safe progression. Incomplete, low-risk work may continue; transient failures may retry within a fixed budget.
+3. Calibrated acceptance. Only tasks inside the safe envelope are evaluated with the clean-quality score.
+
+The frozen thresholds are stored in [`fixtures/frozen_hybrid_config.json`](fixtures/frozen_hybrid_config.json):
+
+- maximum composite risk for autonomous acceptance, `tau_accept = 0.28`
+- clean-quality threshold, `theta_clean = 0.38`
+- small-reasoner ceiling, `0.58`
+- mandatory frontier threshold, `0.70`
+
+## Evaluation result and limits
+
+The strongest existing result is a 100-task held-out, curated synthetic evaluation using live TypeSafe Jev inference. Candidate E resolved 69 tasks autonomously and made no observed frontier-defect leakage errors.
+
+| Measure | Candidate E result | Definition |
+| :--- | :---: | :--- |
+| Autonomous coverage | 69/100 (69%) | `accept`, `terminate`, `retry`, or `continue` without a verifier/frontier call |
+| Frontier calls avoided | 69/100 (69%) | tasks that did not call the frontier tier |
+| Defect leakage / FNR | 0/31 (0%) | frontier-required tasks that did not reach the frontier tier |
+| False alarms / FPR | 0/69 (0%) | non-frontier tasks unnecessarily sent to the frontier tier |
+| Unsafe-to-accept tasks | 43/100 | 31 frontier-required tasks plus 12 transient tasks that required `retry` |
+
+The 95% Wilson interval for 69/100 coverage is approximately 59.4%–77.2%. With 0 observed leakage events among 31 frontier-required tasks, the 95% Wilson upper bound is approximately 11.0% and the one-sided 95% Clopper-Pearson upper bound is approximately 9.2%. Zero observed errors therefore does not establish a true 0% risk rate.
+
+The fixtures are synthetic and curated, with explicit ground truth and a controlled class distribution. Their timestamps are synthetic scenario data, not collection dates. Live Jev inference was used for the reported blind run, but the tasks are not production traffic. Historical experiments and raw outputs are preserved under [`docs/experiments/`](docs/experiments/).
+
+Metric terms are used consistently throughout the current evaluator:
+
+- **False accept rate (FAR):** defective autonomous accepts divided by all autonomous accepts/terminations.
+- **False negative rate (FNR) / defect leakage:** frontier-required tasks that missed frontier review divided by all frontier-required tasks.
+- **False positive rate (FPR) / false alarm rate:** non-frontier tasks sent to frontier review divided by all non-frontier tasks.
+
+## Workspace
 
 ```text
-Task / Agent Output
-        │
-        ▼
-┌──────────────────┐
-│  Reflex Control  │
-│   System-1 layer │
-└────────┬─────────┘
-         │
- ┌───────┼───────────┐
- ▼       ▼           ▼
-accept   retry     escalate
-                    │
-                    ▼
-              System-2 LLM
+crates/reflex-core          Domain types and evidence model
+crates/reflex-provider      Provider abstractions and mock provider
+crates/reflex-jev           TypeSafe Jev client and atomic evidence provider
+crates/reflex-policy        Guarded Hybrid and supporting policies
+crates/reflex-telemetry     SQLite telemetry and outcome linkage
+crates/reflex-calibration   Metrics, confidence intervals, and calibration
+crates/reflex-cli           reflex command-line interface
+examples/                   Runnable verifier-gate and shadow-mode examples
+fixtures/                   Synthetic evaluation fixtures and frozen config
+docs/experiments/           Archived research history and raw reports
 ```
 
-> **The Core Thesis**: Fast probabilistic decisions must be separated from expensive deliberative reasoning, and those predictions must be calibrated against real observed outcomes.
+## Install and run
 
----
-
-## 2. Core Principles
-
-1. **The decision model never directly owns control flow.**
-2. **The model produces probabilistic predictions; deterministic policies determine actions.**
-3. **Every decision is traceable to a later outcome whenever possible.**
-4. **Confidence is never treated as correctness.**
-5. **High-risk actions cannot bypass mandatory verification solely because confidence is high.**
-6. **The architecture remains strictly provider-independent.**
-
-```text
-prediction ──► policy ──► action ──► outcome ──► calibration
-```
-
----
-
-## 3. Primary Demo: Verifier Gate
-
-The primary real-world demonstration is the **Verifier Gate**. In an agentic loop, should every worker code diff or step be sent to an expensive frontier verifier?
-
-```bash
-reflex demo verifier-gate
-```
-
-### Measured Execution Results:
-
-```text
-Tasks processed:        1,000
-
-Auto accepted:            615
-Cheap verified:           227
-Frontier verified:        158
-
-False accepts:              8
-False accept rate:        1.30%
-
-Baseline cost:          $18.72
-Reflex cost:             $8.09
-
-Cost reduction:          56.8%
-Median latency:          -41%
-```
-
----
-
-## 4. Architecture & Workspace Structure
-
-```text
-reflex-control/
-├── Cargo.toml
-├── README.md
-├── LICENSE
-├── reflex.toml               # Runtime policy & provider configuration
-│
-├── crates/
-│   ├── reflex-core/          # Provider-independent types (RiskLevel, Decision, Outcome)
-│   ├── reflex-provider/      # DecisionProvider trait abstraction & MockProvider
-│   ├── reflex-jev/           # Jev HTTP client, retry/backoff, error normalization
-│   ├── reflex-policy/        # ThresholdPolicy, RiskAwarePolicy, CostAwarePolicy
-│   ├── reflex-telemetry/     # SQLite database for decisions, outcomes, shadow traces
-│   ├── reflex-calibration/   # Calibration metrics (Brier, ECE) & ThresholdOptimizer
-│   └── reflex-cli/           # The `reflex` CLI tool
-│
-├── examples/
-│   ├── verifier-gate/        # Standalone agent verifier gating example
-│   └── shadow-mode/          # Sidecar shadow mode observation example
-└── docs/
-```
-
----
-
-## 5. Quickstart & CLI
-
-### Installation
-
-Build and install locally from source:
+Rust 1.88 or newer is required.
 
 ```bash
 cargo install --path crates/reflex-cli
-```
-
-### Initialize Environment
-
-Initializes SQLite telemetry database (`reflex.db`) and local config (`reflex.toml`):
-
-```bash
 reflex init
 ```
 
-### Run a Single Decision
-
-Evaluate a task observation using a provider (e.g., `mock` or `jev`) and evaluate through the active safety policy:
+Mock mode does not require credentials:
 
 ```bash
-reflex run --context "Verify worker code patch for SQL syntax" --risk low
+reflex run --provider mock --context "Check whether the worker patch is safe" --risk low
 ```
 
-Output:
-```text
-Evaluating decision with provider: mock
-
-=== Decision Result ===
-Decision ID:    e1ad3200-0832-4422-8b78-123c93861017
-Provider:       mock
-Selected:       true
-Confidence:     0.9412
-Risk Level:     low
-Policy Action:  accept
-Latency:        5 ms
-Estimated Cost: $0.000100
-
-Decision recorded in telemetry: reflex.db
-```
-
-### Inspect Decision & Linked Outcome
+For live TypeSafe Jev inference, copy [`.env.example`](.env.example) or export the key without committing it:
 
 ```bash
-reflex inspect e1ad3200-0832-4422-8b78-123c93861017
+export JEV_API_KEY="your_typesafe_jev_api_key"
+reflex run --provider jev --context "Add docstrings and verify the test suite" --risk low
 ```
 
----
-
-## 6. Shadow Mode on Verified Real Agent Tasks
-
-Run Reflex Control alongside your existing orchestrator in non-blocking observation mode on real agent/worker traces (`fixtures/real_agent_worker_tasks.json`):
+Live evaluation commands call the TypeSafe API and may incur cost. The release evaluation can be reproduced with the frozen configuration, but normal development and CI use local fixtures and mock providers:
 
 ```bash
-# Evaluate verified agent tasks in shadow mode
-reflex shadow run
-
-# View verified outcome metrics and calibration
-reflex shadow report
+reflex experiment --version v2 --phase blind --provider jev
 ```
 
-Report:
-```text
-================= Reflex Shadow Mode Verification Report =================
-Evaluated Agent Tasks:      120
-Agreement with Orchestrator: 20.8% (Orchestrator Accepts: 0)
-
---- Decision Breakdown ---
-  Autonomous Accepted:        95 ( 79.2%)
-  Cheap Verified:             20 ( 16.7%)
-  Frontier Escalated:          5 (  4.2%)
-
---- Verification & Reliability Metrics ---
-  Total Ground Truth Defects: 11
-  False Accepts (Accepted Defect): 5
-  False Accept Rate (FAR):     5.26%
-  False Negative Rate (FNR):  45.45%
-  Brier Score:                0.0717  (lower is better)
-  Expected Calib. Error (ECE): 0.0350
-  Automation Coverage:         79.2%
-  Frontier Calls Avoided:      115 / 120 ( 95.8%)
-
---- Economic & Latency Impact ---
-  Baseline Cost (All Frontier): $2.4000
-  Reflex Control System-1 Cost: $0.2120
-  Cost Reduction:               91.2%
-  Median/Avg Latency Reduction:  99.4% (1850ms -> 11.2ms)
-==========================================================================
-```
-
----
-
-## 7. Cost vs Risk Pareto Frontier
-
-Generate empirical Pareto trade-offs across decision cutoffs to balance verifier call reduction against risk:
+## Examples
 
 ```bash
-reflex pareto
+cargo run -p example-verifier-gate
+cargo run -p example-shadow-mode
 ```
 
-```text
-=================== Cost vs Risk Pareto Frontier ===================
-Evaluated Ground Truth Samples: 120
-Objective: Frontier calls avoided >= 40-50% with FAR < 1.0% and FNR < 1.0%
-────────────────────────────────────────────────────────────────────
-Cutoff   | Coverage | Calls Avoided | Cost Saved |    FAR |    FNR | Pareto Status     
-────────────────────────────────────────────────────────────────────
-0.70     |   100.0% |        100.0% |      99.5% |  9.17% | 100.00% | * Optimal         
-0.80     |    97.5% |        100.0% |      98.9% |  6.84% |  72.73% | * Optimal         
-0.90     |    85.0% |        100.0% |      95.8% |  5.88% |  54.55% | * Optimal         
-0.92     |    78.3% |        100.0% |      94.1% |  1.06% |   9.09% | * Optimal         
-0.96     |    42.5% |        100.0% |      85.1% |  0.00% |   0.00% | * Optimal [TARGET MET]
-0.97     |    27.5% |        100.0% |      81.4% |  0.00% |   0.00% |  [TARGET MET]     
-0.98     |    17.5% |        100.0% |      78.9% |  0.00% |   0.00% |  [TARGET MET]     
-────────────────────────────────────────────────────────────────────
+The verifier-gate example demonstrates a clean autonomous pass and a hard security veto. The shadow-mode example records a prediction without changing the host orchestrator's decision. See [`examples/README.md`](examples/README.md).
 
---- Pareto Optimization Insights ---
-Recommended Operating Point: Threshold = 0.96
-  - Frontier Verifier Calls Avoided: 100.0% (Target >= 40-50% SATISFIED)
-  - Autonomous Automation Coverage:  42.5%
-  - Expected Inference Cost Savings: 85.1%
-  - False Accept Rate (FAR):         0.00% (< 1.0% SATISFIED)
-  - False Negative Rate (FNR):       0.00% (< 1.0% SATISFIED)
-====================================================================
-```
-
----
-
-## 8. Calibration & Threshold Optimizer
-
-Tuning decision cutoffs from empirical real outcomes:
+## Quality gates
 
 ```bash
-reflex calibrate --max-false-accept 0.01 --max-false-negative 0.01 --min-coverage 0.40
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo test --release --workspace
+cargo build --release --workspace
 ```
 
-```text
-================ Reflex Calibration & Optimization Report ================
-Evaluation Dataset Size:        120
-Accuracy:                       84.17%
-Precision:                      94.12%
-Recall:                         88.07%
-Brier Score:                    0.0717  (lower is better, 0 = perfect)
-Expected Calib. Error (ECE):    0.0350
-Automation Coverage:            85.0%
-Frontier Verifier Calls Avoided: 85.0%
-Projected Cost Reduction:       84.5%
-False Accept Rate (FAR):        5.88%
-False Negative Rate (FNR):      54.55%
+## Known limitations and v0.2 direction
 
---- Threshold Optimizer Recommendation (Real Outcome Data) ---
-Current Operating Threshold:    0.900
-Recommended Safe Threshold:     0.951
-Expected Automation Coverage:   55.8%
-Expected Calls Avoided:         100.0%
-Expected Cost Reduction:        88.5%
-Expected False Accept Rate:     0.00%
-Expected False Negative Rate:   0.00%
-Optimization Status:            Feasible (Target Criteria Met)
-Detail: Optimal calibrated threshold is 0.951. Meets FAR <= 1.00%, FNR <= 1.00%, with 55.8% coverage (100.0% verifier calls avoided).
-==========================================================================
-```
+- The v0.1 evidence comes from a small synthetic benchmark and does not measure production reliability or domain shift.
+- Live provider latency, availability, and output can vary between runs.
+- Thresholds must be validated on local shadow-mode telemetry before production use.
+- v0.2 is expected to add alternative evidence providers, OpenTelemetry export, and broader evaluation on real workloads.
 
----
+## License
 
-## 8. Benchmark Suite
-
-Compare Reflex Control against Frontier LLM structured outputs, small distilled models, and heuristics:
-
-```bash
-reflex benchmark --tasks 1000
-```
-
-| System Architecture | Latency | Cost / 1k Decisions | Accuracy | FAR (False Accept) | Coverage | Brier Score | ECE |
-|---|---|---|---|---|---|---|---|
-| **Reflex Control (System-1 + Policy)** | **11.4 ms** | **$0.12** | **94.2%** | **0.94%** | **68.4%** | **0.0480** | **0.0210** |
-| Frontier LLM (Full Deliberative) | 1,780 ms | $18.50 | 95.8% | 1.80% | 100.0% | 0.0620 | 0.0680 |
-| Small LLM (8B Distilled) | 420 ms | $2.10 | 87.1% | 4.80% | 100.0% | 0.0980 | 0.0890 |
-| Deterministic Heuristics | 0.8 ms | $0.00 | 74.3% | 8.90% | 42.0% | 0.2100 | 0.1800 |
-
----
-
-## 9. Safety Invariant: High-Risk Enforcement
-
-Confidence cannot override risk invariants:
-
-```rust
-// Even if the model outputs 0.999 confidence:
-let high_risk_obs = Observation::new("DROP TABLE accounts")
-    .with_risk(RiskLevel::Critical);
-
-// RiskAwarePolicy intercepts and mandates Escalation/Verification
-let action = policy.decide(&high_confidence_resp, &high_risk_obs);
-assert_eq!(action, ReflexAction::Escalate);
-```
-
----
-
-## 10. Roadmap
-
-- [x] **v0.1 (Current MVP)**
-  - Core domain model (`reflex-core`)
-  - Provider abstraction & `MockProvider`
-  - `reflex-jev` HTTP client with retry/backoff
-  - Deterministic policies (`ThresholdPolicy`, `RiskAwarePolicy`, `CostAwarePolicy`)
-  - SQLite telemetry & outcome tracking (`reflex-telemetry`)
-  - Calibration engine & Threshold optimizer (`reflex-calibration`)
-  - Full CLI suite (`reflex init`, `run`, `shadow`, `inspect`, `report`, `calibrate`, `benchmark`, `demo`)
-  - CI test matrix across Linux, macOS, and Windows
-- [ ] **v0.2**
-  - OpenAI structured-output baseline provider
-  - Anthropic baseline provider
-  - OpenTelemetry exporter
-  - Multi-tenant SQLite / PostgreSQL telemetry backend
-- [ ] **v0.3**
-  - Swarm batch evaluation & Top-K filtering
-  - Semantic worker conflict detection
-  - Dynamic budget-aware routing
-
----
-
-## 11. License
-
-Licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Licensed under either the Apache License, Version 2.0, or the MIT license, at your option. See [`LICENSE`](LICENSE), [`LICENSE-APACHE`](LICENSE-APACHE), and [`LICENSE-MIT`](LICENSE-MIT).

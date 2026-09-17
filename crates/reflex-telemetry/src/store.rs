@@ -94,16 +94,21 @@ impl TelemetryStore {
             .lock()
             .map_err(|e| TelemetryError::LockError(e.to_string()))?;
         let predicted_str = serde_json::to_string(&rec.predicted_action)?;
-        let outcome_str = rec
+        let final_outcome_str = rec
             .final_outcome
             .as_ref()
             .map(|o| serde_json::to_string(o).unwrap_or_default());
+        let ci_outcome_str = rec
+            .ci_outcome
+            .as_ref()
+            .map(|o| serde_json::to_string(o).unwrap_or_default())
+            .or_else(|| final_outcome_str.clone());
 
         conn.execute(
             r#"INSERT OR REPLACE INTO shadow_records (
                 id, task_id, timestamp, predicted_action, confidence,
-                actual_action, final_outcome, latency_ms, cost_estimate
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+                actual_action, verifier_result, ci_outcome, final_outcome, latency_ms, cost_estimate
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
             params![
                 rec.id,
                 rec.task_id,
@@ -111,7 +116,9 @@ impl TelemetryStore {
                 predicted_str,
                 rec.confidence,
                 rec.actual_action,
-                outcome_str,
+                rec.verifier_result,
+                ci_outcome_str,
+                final_outcome_str,
                 rec.latency_ms as i64,
                 rec.cost_estimate,
             ],
@@ -321,7 +328,7 @@ impl TelemetryStore {
             .map_err(|e| TelemetryError::LockError(e.to_string()))?;
         let mut stmt = conn.prepare(
             r#"SELECT id, task_id, timestamp, predicted_action, confidence,
-                      actual_action, final_outcome, latency_ms, cost_estimate
+                      actual_action, verifier_result, ci_outcome, final_outcome, latency_ms, cost_estimate
                FROM shadow_records ORDER BY timestamp DESC LIMIT ?1"#,
         )?;
 
@@ -332,11 +339,16 @@ impl TelemetryStore {
             let pred_str: String = row.get(3)?;
             let conf: f64 = row.get(4)?;
             let act: String = row.get(5)?;
-            let out_str: Option<String> = row.get(6)?;
-            let latency_i64: i64 = row.get(7)?;
-            let cost: f64 = row.get(8)?;
+            let verifier_result: Option<String> = row.get(6)?;
+            let ci_str: Option<String> = row.get(7)?;
+            let out_str: Option<String> = row.get(8)?;
+            let latency_i64: i64 = row.get(9)?;
+            let cost: f64 = row.get(10)?;
 
-            let final_outcome = out_str.and_then(|s| serde_json::from_str(&s).ok());
+            let ci_outcome: Option<Outcome> = ci_str.and_then(|s| serde_json::from_str(&s).ok());
+            let final_outcome = out_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .or(ci_outcome);
 
             Ok(ShadowRecord {
                 id,
@@ -347,6 +359,8 @@ impl TelemetryStore {
                 predicted_action: serde_json::from_str(&pred_str).unwrap_or(ReflexAction::Accept),
                 confidence: conf,
                 actual_action: act,
+                verifier_result,
+                ci_outcome,
                 final_outcome,
                 latency_ms: latency_i64 as u64,
                 cost_estimate: cost,

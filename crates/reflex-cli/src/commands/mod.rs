@@ -3,6 +3,7 @@ pub mod calibrate;
 pub mod demo;
 pub mod init;
 pub mod inspect;
+pub mod pareto;
 pub mod report;
 pub mod run;
 pub mod shadow;

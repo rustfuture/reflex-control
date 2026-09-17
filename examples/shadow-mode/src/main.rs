@@ -35,6 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         predicted_action: predicted_action.clone(),
         confidence: resp.decision.confidence,
         actual_action: orchestrator_action.to_string(),
+        verifier_result: Some("Pass: Authentication cookie handler parsed cleanly".to_string()),
+        ci_outcome: Some(Outcome::Success),
         final_outcome: Some(Outcome::Success),
         latency_ms: resp.latency_ms,
         cost_estimate: resp.cost_estimate,

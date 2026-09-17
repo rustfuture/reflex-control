@@ -46,6 +46,9 @@ enum Commands {
     /// Calculate calibration metrics and optimize policy thresholds
     Calibrate(CalibrateArgs),
 
+    /// Generate Cost vs Risk Pareto Frontier analysis
+    Pareto(ParetoArgs),
+
     /// Run benchmark comparing Reflex vs frontier/small models
     Benchmark {
         #[arg(long, default_value_t = 1000)]
@@ -82,9 +85,13 @@ struct RunArgs {
 
 #[derive(Subcommand, Debug)]
 enum ShadowSubcommands {
-    /// Run shadow mode on synthetic or recorded tasks
+    /// Run shadow mode on verified agent task dataset or simulation
     Run {
-        #[arg(long, default_value_t = 100)]
+        /// Path to verified agent tasks JSON dataset
+        #[arg(short, long)]
+        dataset: Option<String>,
+
+        #[arg(long, default_value_t = 120)]
         count: usize,
 
         #[arg(long, default_value = "reflex.db")]
@@ -100,14 +107,31 @@ enum ShadowSubcommands {
 
 #[derive(Args, Debug)]
 struct CalibrateArgs {
+    /// Path to verified agent tasks JSON dataset
+    #[arg(short, long)]
+    dataset: Option<String>,
+
     #[arg(long, default_value_t = 0.01)]
     max_false_accept: f64,
 
-    #[arg(long, default_value_t = 0.60)]
+    #[arg(long, default_value_t = 0.01)]
+    max_false_negative: f64,
+
+    #[arg(long, default_value_t = 0.50)]
     min_coverage: f64,
 
     #[arg(long, default_value_t = 0.90)]
     threshold: f64,
+
+    #[arg(long, default_value = "reflex.db")]
+    db: String,
+}
+
+#[derive(Args, Debug)]
+struct ParetoArgs {
+    /// Path to verified agent tasks JSON dataset
+    #[arg(short, long)]
+    dataset: Option<String>,
 
     #[arg(long, default_value = "reflex.db")]
     db: String,
@@ -142,8 +166,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         }
         Commands::Shadow { sub } => match sub {
-            ShadowSubcommands::Run { count, db } => {
-                commands::shadow::run_simulation(count, db).await?;
+            ShadowSubcommands::Run { dataset, count, db } => {
+                commands::shadow::run_shadow(dataset, count, db).await?;
             }
             ShadowSubcommands::Report { db } => {
                 commands::shadow::report(db)?;
@@ -157,11 +181,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Calibrate(args) => {
             commands::calibrate::execute(
+                args.dataset,
                 args.max_false_accept,
+                args.max_false_negative,
                 args.min_coverage,
                 args.threshold,
                 args.db,
             )?;
+        }
+        Commands::Pareto(args) => {
+            commands::pareto::execute(args.dataset, args.db)?;
         }
         Commands::Benchmark { tasks } => {
             commands::benchmark::execute(tasks)?;

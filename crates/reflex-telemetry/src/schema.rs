@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS shadow_records (
     predicted_action TEXT NOT NULL,
     confidence REAL NOT NULL,
     actual_action TEXT NOT NULL,
+    verifier_result TEXT,
+    ci_outcome TEXT,
     final_outcome TEXT,
     latency_ms INTEGER NOT NULL,
     cost_estimate REAL NOT NULL
@@ -55,5 +57,23 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_result ON outcomes(result);
 
 pub fn initialize_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(SCHEMA)?;
+
+    // Safe column migrations for existing SQLite databases
+    let mut stmt = conn.prepare("PRAGMA table_info(shadow_records)")?;
+    let columns: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|res| res.ok())
+        .collect();
+
+    if !columns.iter().any(|c| c == "verifier_result") {
+        let _ = conn.execute(
+            "ALTER TABLE shadow_records ADD COLUMN verifier_result TEXT;",
+            [],
+        );
+    }
+    if !columns.iter().any(|c| c == "ci_outcome") {
+        let _ = conn.execute("ALTER TABLE shadow_records ADD COLUMN ci_outcome TEXT;", []);
+    }
+
     Ok(())
 }

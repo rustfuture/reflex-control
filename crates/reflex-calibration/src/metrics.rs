@@ -35,6 +35,13 @@ pub struct CalibrationMetrics {
     pub selective_accuracy: f64,
     pub false_accept_rate: f64,
     pub false_escalate_rate: f64,
+    pub false_negative_rate: f64,
+    pub frontier_calls_avoided: usize,
+    pub frontier_calls_avoided_pct: f64,
+    pub cost_reduction_pct: f64,
+    pub total_actual_failures: usize,
+    pub false_negatives: usize,
+    pub false_accepts: usize,
 }
 
 impl CalibrationMetrics {
@@ -56,15 +63,19 @@ impl CalibrationMetrics {
 
         let mut escalated_count = 0;
         let mut escalated_would_succeed = 0;
+        let mut total_actual_failures = 0;
 
         for pair in pairs {
             let p = pair.confidence;
             let y = if pair.is_success() { 1.0 } else { 0.0 };
             brier_sum += (p - y).powi(2);
 
-            let pred_success = p >= default_threshold;
             let actual_success = pair.is_success();
+            if !actual_success {
+                total_actual_failures += 1;
+            }
 
+            let pred_success = p >= default_threshold;
             if pred_success && actual_success {
                 tp += 1;
             } else if pred_success && !actual_success {
@@ -143,14 +154,39 @@ impl CalibrationMetrics {
             0.0
         };
 
+        let false_accepts = accepted_failed;
+        let false_negatives = accepted_failed;
+
         let false_accept_rate = if accepted_count > 0 {
-            accepted_failed as f64 / accepted_count as f64
+            false_accepts as f64 / accepted_count as f64
+        } else {
+            0.0
+        };
+
+        let false_negative_rate = if total_actual_failures > 0 {
+            false_negatives as f64 / total_actual_failures as f64
         } else {
             0.0
         };
 
         let false_escalate_rate = if escalated_count > 0 {
             escalated_would_succeed as f64 / escalated_count as f64
+        } else {
+            0.0
+        };
+
+        // Frontier verifier calls avoided = decisions that did not require frontier verification
+        let frontier_calls_avoided = pairs.len().saturating_sub(escalated_count);
+        let frontier_calls_avoided_pct = (frontier_calls_avoided as f64 / n) * 100.0;
+
+        // Baseline cost: every task sent to frontier model ($0.02)
+        // Reflex cost: System-1 ($0.0001) + escalated frontier ($0.02) + cheap verifier ($0.005)
+        let baseline_cost = n * 0.02;
+        let reflex_cost = (n * 0.0001)
+            + (escalated_count as f64 * 0.02)
+            + ((n - accepted_count as f64 - escalated_count as f64).max(0.0) * 0.005);
+        let cost_reduction_pct = if baseline_cost > 0.0 {
+            ((baseline_cost - reflex_cost) / baseline_cost) * 100.0
         } else {
             0.0
         };
@@ -167,6 +203,13 @@ impl CalibrationMetrics {
             selective_accuracy,
             false_accept_rate,
             false_escalate_rate,
+            false_negative_rate,
+            frontier_calls_avoided,
+            frontier_calls_avoided_pct,
+            cost_reduction_pct,
+            total_actual_failures,
+            false_negatives,
+            false_accepts,
         }
     }
 }
@@ -189,6 +232,10 @@ mod tests {
         assert_eq!(metrics.total_samples, 5);
         assert!(metrics.brier_score > 0.0);
         assert!(metrics.false_accept_rate > 0.0);
+        assert!(metrics.false_negative_rate > 0.0);
+        assert_eq!(metrics.total_actual_failures, 2);
+        assert_eq!(metrics.false_negatives, 1);
         assert!(metrics.coverage > 0.5);
+        assert!(metrics.frontier_calls_avoided > 0);
     }
 }

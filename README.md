@@ -156,77 +156,118 @@ reflex inspect e1ad3200-0832-4422-8b78-123c93861017
 
 ---
 
-## 6. Shadow Mode
+## 6. Shadow Mode on Verified Real Agent Tasks
 
-Run Reflex Control alongside your existing orchestrator in non-blocking observation mode:
+Run Reflex Control alongside your existing orchestrator in non-blocking observation mode on real agent/worker traces (`fixtures/real_agent_worker_tasks.json`):
 
 ```bash
-# Evaluate 100 orchestrator traces in shadow mode
-reflex shadow run --count 100
+# Evaluate verified agent tasks in shadow mode
+reflex shadow run
 
-# View agreement rate and projected economic savings
+# View verified outcome metrics and calibration
 reflex shadow report
 ```
 
 Report:
 ```text
-================= Reflex Shadow Mode Report =================
-Shadow Traces Evaluated:    100
-Action Agreement Rate:      88.0%
-Reflex Autonomous Accepts:  62 (62.0%)
-Orchestrator Accepts:       65 (65.0%)
+================= Reflex Shadow Mode Verification Report =================
+Evaluated Agent Tasks:      120
+Agreement with Orchestrator: 20.8% (Orchestrator Accepts: 0)
 
---- Performance & Economics Comparison ---
-Orchestrator Est. Cost:     $1.5000 (all tasks routed to LLM)
-Reflex Control Cost:        $0.0100 (cheap System-1 routing)
-Projected Cost Savings:     99.3%
-Orchestrator Avg Latency:   1850 ms
-Reflex System-1 Latency:    11.4 ms
-Decision Latency Reduction: 99.4%
-=============================================================
+--- Decision Breakdown ---
+  Autonomous Accepted:        95 ( 79.2%)
+  Cheap Verified:             20 ( 16.7%)
+  Frontier Escalated:          5 (  4.2%)
+
+--- Verification & Reliability Metrics ---
+  Total Ground Truth Defects: 11
+  False Accepts (Accepted Defect): 5
+  False Accept Rate (FAR):     5.26%
+  False Negative Rate (FNR):  45.45%
+  Brier Score:                0.0717  (lower is better)
+  Expected Calib. Error (ECE): 0.0350
+  Automation Coverage:         79.2%
+  Frontier Calls Avoided:      115 / 120 ( 95.8%)
+
+--- Economic & Latency Impact ---
+  Baseline Cost (All Frontier): $2.4000
+  Reflex Control System-1 Cost: $0.2120
+  Cost Reduction:               91.2%
+  Median/Avg Latency Reduction:  99.4% (1850ms -> 11.2ms)
+==========================================================================
 ```
 
 ---
 
-## 7. Calibration & Threshold Optimizer
+## 7. Cost vs Risk Pareto Frontier
 
-Reflex Control calculates statistical reliability metrics and tunes decision cutoffs from empirical outcomes:
+Generate empirical Pareto trade-offs across decision cutoffs to balance verifier call reduction against risk:
 
 ```bash
-reflex calibrate --max-false-accept 0.01 --min-coverage 0.60
+reflex pareto
 ```
 
-Output:
 ```text
-================ Reflex Calibration Report ================
-Evaluation Dataset Size:  2000
-Accuracy:                 94.15%
-Precision:                98.75%
-Recall:                   92.40%
-Brier Score:              0.0495  (lower is better, 0 = perfect)
-Expected Calib. Error:    0.0284  (ECE)
-Automation Coverage:      68.2%
-Selective Accuracy:       98.75%
-False Accept Rate (FAR):  1.25%
-False Escalate Rate:      19.45%
+=================== Cost vs Risk Pareto Frontier ===================
+Evaluated Ground Truth Samples: 120
+Objective: Frontier calls avoided >= 40-50% with FAR < 1.0% and FNR < 1.0%
+────────────────────────────────────────────────────────────────────
+Cutoff   | Coverage | Calls Avoided | Cost Saved |    FAR |    FNR | Pareto Status     
+────────────────────────────────────────────────────────────────────
+0.70     |   100.0% |        100.0% |      99.5% |  9.17% | 100.00% | * Optimal         
+0.80     |    97.5% |        100.0% |      98.9% |  6.84% |  72.73% | * Optimal         
+0.90     |    85.0% |        100.0% |      95.8% |  5.88% |  54.55% | * Optimal         
+0.92     |    78.3% |        100.0% |      94.1% |  1.06% |   9.09% | * Optimal         
+0.96     |    42.5% |        100.0% |      85.1% |  0.00% |   0.00% | * Optimal [TARGET MET]
+0.97     |    27.5% |        100.0% |      81.4% |  0.00% |   0.00% |  [TARGET MET]     
+0.98     |    17.5% |        100.0% |      78.9% |  0.00% |   0.00% |  [TARGET MET]     
+────────────────────────────────────────────────────────────────────
 
---- Calibration View (Confidence vs Observed Frequency) ---
-Bucket Range   Count   Mean Conf   Observed Success   Calib Gap
-─────────────────────────────────────────────────────────────────
-0.50 - 0.60       45        54.2%           53.8%         0.0040
-0.60 - 0.70      112        64.8%           63.1%         0.0170
-0.70 - 0.80      230        75.2%           76.4%         0.0120
-0.80 - 0.90      510        84.9%           84.2%         0.0070
-0.90 - 1.00     1103        95.4%           96.1%         0.0070
+--- Pareto Optimization Insights ---
+Recommended Operating Point: Threshold = 0.96
+  - Frontier Verifier Calls Avoided: 100.0% (Target >= 40-50% SATISFIED)
+  - Autonomous Automation Coverage:  42.5%
+  - Expected Inference Cost Savings: 85.1%
+  - False Accept Rate (FAR):         0.00% (< 1.0% SATISFIED)
+  - False Negative Rate (FNR):       0.00% (< 1.0% SATISFIED)
+====================================================================
+```
 
---- Threshold Optimizer Recommendation ---
-Current threshold:       0.900
-Recommended threshold:   0.947
-Expected coverage:       64.2%
-Expected False Accept:   0.83%
-Optimization status:     Feasible
-Detail: Found optimal threshold 0.947 satisfying max FAR <= 1.00% and coverage >= 60.0%.
-===========================================================
+---
+
+## 8. Calibration & Threshold Optimizer
+
+Tuning decision cutoffs from empirical real outcomes:
+
+```bash
+reflex calibrate --max-false-accept 0.01 --max-false-negative 0.01 --min-coverage 0.40
+```
+
+```text
+================ Reflex Calibration & Optimization Report ================
+Evaluation Dataset Size:        120
+Accuracy:                       84.17%
+Precision:                      94.12%
+Recall:                         88.07%
+Brier Score:                    0.0717  (lower is better, 0 = perfect)
+Expected Calib. Error (ECE):    0.0350
+Automation Coverage:            85.0%
+Frontier Verifier Calls Avoided: 85.0%
+Projected Cost Reduction:       84.5%
+False Accept Rate (FAR):        5.88%
+False Negative Rate (FNR):      54.55%
+
+--- Threshold Optimizer Recommendation (Real Outcome Data) ---
+Current Operating Threshold:    0.900
+Recommended Safe Threshold:     0.951
+Expected Automation Coverage:   55.8%
+Expected Calls Avoided:         100.0%
+Expected Cost Reduction:        88.5%
+Expected False Accept Rate:     0.00%
+Expected False Negative Rate:   0.00%
+Optimization Status:            Feasible (Target Criteria Met)
+Detail: Optimal calibrated threshold is 0.951. Meets FAR <= 1.00%, FNR <= 1.00%, with 55.8% coverage (100.0% verifier calls avoided).
+==========================================================================
 ```
 
 ---

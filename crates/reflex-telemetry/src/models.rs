@@ -36,6 +36,8 @@ pub struct ShadowRecord {
     pub predicted_action: ReflexAction,
     pub confidence: f64,
     pub actual_action: String,
+    pub verifier_result: Option<String>,
+    pub ci_outcome: Option<Outcome>,
     pub final_outcome: Option<Outcome>,
     pub latency_ms: u64,
     pub cost_estimate: f64,

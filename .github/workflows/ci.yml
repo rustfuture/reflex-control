@@ -44,3 +44,9 @@ jobs:
 
       - name: Test Verifier Gate Demo
         run: cargo run --bin reflex -- demo verifier-gate
+
+      - name: Test Shadow Mode on Verified Dataset
+        run: cargo run --bin reflex -- shadow run
+
+      - name: Test Cost vs Risk Pareto
+        run: cargo run --bin reflex -- pareto

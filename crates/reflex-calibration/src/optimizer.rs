@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct OptimizationConstraints {
     pub current_threshold: f64,
     pub max_false_accept_rate: f64,
+    pub max_false_negative_rate: f64,
     pub min_coverage: f64,
 }
 
@@ -13,7 +14,8 @@ impl Default for OptimizationConstraints {
         Self {
             current_threshold: 0.90,
             max_false_accept_rate: 0.01,
-            min_coverage: 0.60,
+            max_false_negative_rate: 0.01,
+            min_coverage: 0.50,
         }
     }
 }
@@ -23,16 +25,87 @@ pub struct OptimizationResult {
     pub current_threshold: f64,
     pub current_coverage: f64,
     pub current_false_accept_rate: f64,
+    pub current_false_negative_rate: f64,
     pub recommended_threshold: f64,
     pub expected_coverage: f64,
+    pub expected_frontier_calls_avoided_pct: f64,
+    pub expected_cost_reduction_pct: f64,
     pub expected_false_accept_rate: f64,
+    pub expected_false_negative_rate: f64,
     pub is_feasible: bool,
     pub explanation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParetoPoint {
+    pub threshold: f64,
+    pub coverage_pct: f64,
+    pub calls_avoided_pct: f64,
+    pub cost_reduction_pct: f64,
+    pub false_accept_rate: f64,
+    pub false_negative_rate: f64,
+    pub is_target_met: bool,
+    pub is_pareto_optimal: bool,
 }
 
 pub struct ThresholdOptimizer;
 
 impl ThresholdOptimizer {
+    /// Evaluate metrics for a specific threshold cutoff tau
+    pub fn evaluate_cutoff(pairs: &[DecisionOutcomePair], tau: f64) -> (f64, f64, f64, f64, f64) {
+        if pairs.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0, 0.0);
+        }
+        let n = pairs.len() as f64;
+        let mut accepted_total = 0usize;
+        let mut accepted_failed = 0usize;
+        let mut total_actual_failures = 0usize;
+        let mut escalated_total = 0usize;
+
+        for p in pairs {
+            let actual_success = p.is_success();
+            if !actual_success {
+                total_actual_failures += 1;
+            }
+
+            let is_accepted = p.confidence >= tau;
+            if is_accepted {
+                accepted_total += 1;
+                if !actual_success {
+                    accepted_failed += 1;
+                }
+            } else if p.confidence < 0.65 {
+                escalated_total += 1;
+            }
+        }
+
+        let coverage = accepted_total as f64 / n;
+        let far = if accepted_total > 0 {
+            accepted_failed as f64 / accepted_total as f64
+        } else {
+            0.0
+        };
+        let fnr = if total_actual_failures > 0 {
+            accepted_failed as f64 / total_actual_failures as f64
+        } else {
+            0.0
+        };
+
+        let calls_avoided_pct = ((n - escalated_total as f64) / n) * 100.0;
+
+        let baseline_cost = n * 0.02;
+        let reflex_cost = (n * 0.0001)
+            + (escalated_total as f64 * 0.02)
+            + ((n - accepted_total as f64 - escalated_total as f64).max(0.0) * 0.005);
+        let cost_reduction_pct = if baseline_cost > 0.0 {
+            ((baseline_cost - reflex_cost) / baseline_cost) * 100.0
+        } else {
+            0.0
+        };
+
+        (coverage, far, fnr, calls_avoided_pct, cost_reduction_pct)
+    }
+
     pub fn optimize(
         pairs: &[DecisionOutcomePair],
         constraints: &OptimizationConstraints,
@@ -42,91 +115,82 @@ impl ThresholdOptimizer {
                 current_threshold: constraints.current_threshold,
                 current_coverage: 0.0,
                 current_false_accept_rate: 0.0,
+                current_false_negative_rate: 0.0,
                 recommended_threshold: constraints.current_threshold,
                 expected_coverage: 0.0,
+                expected_frontier_calls_avoided_pct: 0.0,
+                expected_cost_reduction_pct: 0.0,
                 expected_false_accept_rate: 0.0,
+                expected_false_negative_rate: 0.0,
                 is_feasible: false,
                 explanation: "Dataset is empty; cannot optimize threshold.".to_string(),
             };
         }
 
-        let n = pairs.len() as f64;
+        let (curr_cov, curr_far, curr_fnr, _, _) =
+            Self::evaluate_cutoff(pairs, constraints.current_threshold);
 
-        let eval_threshold = |tau: f64| -> (f64, f64) {
-            let mut accepted_total = 0;
-            let mut accepted_failed = 0;
-
-            for p in pairs {
-                if p.confidence >= tau {
-                    accepted_total += 1;
-                    if !p.is_success() {
-                        accepted_failed += 1;
-                    }
-                }
-            }
-
-            let cov = accepted_total as f64 / n;
-            let far = if accepted_total > 0 {
-                accepted_failed as f64 / accepted_total as f64
-            } else {
-                0.0
-            };
-            (cov, far)
-        };
-
-        let (curr_cov, curr_far) = eval_threshold(constraints.current_threshold);
-
-        // Search candidate thresholds from 0.500 to 0.999 in steps of 0.001
+        // Search candidate thresholds from 0.500 to 0.995 in steps of 0.001
         let mut best_threshold = constraints.current_threshold;
         let mut best_coverage = 0.0;
         let mut best_far = 1.0;
+        let mut best_fnr = 1.0;
         let mut found_feasible = false;
 
-        // Collect unique candidate cutoffs
         let mut step = 500;
-        while step <= 999 {
+        while step <= 995 {
             let tau = step as f64 / 1000.0;
-            let (cov, far) = eval_threshold(tau);
+            let (cov, far, fnr, _, _) = Self::evaluate_cutoff(pairs, tau);
 
-            let satisfies_safety = far <= constraints.max_false_accept_rate;
+            let satisfies_safety = far <= constraints.max_false_accept_rate
+                && fnr <= constraints.max_false_negative_rate;
             let satisfies_coverage = cov >= constraints.min_coverage;
 
             if satisfies_safety && satisfies_coverage {
-                // Feasible: we want to maximize coverage or pick the lowest safe threshold
+                // Feasible: prioritize maximizing coverage while keeping FAR and FNR below target
                 if !found_feasible
                     || cov > best_coverage
-                    || (cov == best_coverage && far < best_far)
+                    || (cov == best_coverage && (far + fnr) < (best_far + best_fnr))
                 {
                     found_feasible = true;
                     best_threshold = tau;
                     best_coverage = cov;
                     best_far = far;
+                    best_fnr = fnr;
                 }
             } else if !found_feasible {
-                // If not yet feasible, prioritize satisfying safety first
-                if far <= constraints.max_false_accept_rate && cov > best_coverage {
+                // Best effort safety first: satisfy FAR & FNR if possible
+                let is_better = (satisfies_safety && cov > best_coverage)
+                    || (far <= constraints.max_false_accept_rate
+                        && (cov > best_coverage || best_far > constraints.max_false_accept_rate));
+                if is_better {
                     best_threshold = tau;
                     best_coverage = cov;
                     best_far = far;
+                    best_fnr = fnr;
                 }
             }
             step += 1;
         }
 
-        let (exp_cov, exp_far) = eval_threshold(best_threshold);
+        let (exp_cov, exp_far, exp_fnr, exp_calls_avoided, exp_cost_red) =
+            Self::evaluate_cutoff(pairs, best_threshold);
 
         let explanation = if found_feasible {
             format!(
-                "Found optimal threshold {:.3} satisfying max FAR <= {:.2}% and coverage >= {:.1}%.",
+                "Optimal calibrated threshold is {:.3}. Meets FAR <= {:.2}%, FNR <= {:.2}%, with {:.1}% coverage ({:.1}% verifier calls avoided).",
                 best_threshold,
                 constraints.max_false_accept_rate * 100.0,
-                constraints.min_coverage * 100.0
+                constraints.max_false_negative_rate * 100.0,
+                exp_cov * 100.0,
+                exp_calls_avoided
             )
         } else {
             format!(
-                "Strict constraints could not both be met. Recommended best-effort safety threshold is {:.3} (FAR: {:.2}%, Coverage: {:.1}%).",
+                "Recommended best-effort safety threshold is {:.3} (FAR: {:.2}%, FNR: {:.2}%, Coverage: {:.1}%).",
                 best_threshold,
                 exp_far * 100.0,
+                exp_fnr * 100.0,
                 exp_cov * 100.0
             )
         };
@@ -135,12 +199,68 @@ impl ThresholdOptimizer {
             current_threshold: constraints.current_threshold,
             current_coverage: curr_cov,
             current_false_accept_rate: curr_far,
+            current_false_negative_rate: curr_fnr,
             recommended_threshold: best_threshold,
             expected_coverage: exp_cov,
+            expected_frontier_calls_avoided_pct: exp_calls_avoided,
+            expected_cost_reduction_pct: exp_cost_red,
             expected_false_accept_rate: exp_far,
+            expected_false_negative_rate: exp_fnr,
             is_feasible: found_feasible,
             explanation,
         }
+    }
+
+    /// Computes the Cost vs Risk Pareto Frontier across candidate thresholds
+    pub fn pareto_frontier(pairs: &[DecisionOutcomePair]) -> Vec<ParetoPoint> {
+        if pairs.is_empty() {
+            return Vec::new();
+        }
+
+        let candidate_steps = [
+            0.70, 0.75, 0.80, 0.82, 0.85, 0.88, 0.90, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98,
+        ];
+
+        let mut points: Vec<ParetoPoint> = candidate_steps
+            .iter()
+            .map(|&tau| {
+                let (cov, far, fnr, calls_avoided, cost_red) = Self::evaluate_cutoff(pairs, tau);
+                let is_target_met = far <= 0.01 && fnr <= 0.01 && calls_avoided >= 40.0;
+                ParetoPoint {
+                    threshold: tau,
+                    coverage_pct: cov * 100.0,
+                    calls_avoided_pct: calls_avoided,
+                    cost_reduction_pct: cost_red,
+                    false_accept_rate: far,
+                    false_negative_rate: fnr,
+                    is_target_met,
+                    is_pareto_optimal: false,
+                }
+            })
+            .collect();
+
+        // Mark non-dominated points: point A dominates point B if
+        // Cost Reduction is >= and Risk (FAR+FNR) is <= (with at least one strictly better)
+        for i in 0..points.len() {
+            let mut is_dominated = false;
+            for j in 0..points.len() {
+                if i != j {
+                    let cost_i = points[i].cost_reduction_pct;
+                    let cost_j = points[j].cost_reduction_pct;
+                    let risk_i = points[i].false_accept_rate + points[i].false_negative_rate;
+                    let risk_j = points[j].false_accept_rate + points[j].false_negative_rate;
+
+                    if cost_j >= cost_i && risk_j <= risk_i && (cost_j > cost_i || risk_j < risk_i)
+                    {
+                        is_dominated = true;
+                        break;
+                    }
+                }
+            }
+            points[i].is_pareto_optimal = !is_dominated;
+        }
+
+        points
     }
 }
 
@@ -178,6 +298,7 @@ mod tests {
         let constraints = OptimizationConstraints {
             current_threshold: 0.85,
             max_false_accept_rate: 0.02,
+            max_false_negative_rate: 0.05,
             min_coverage: 0.70,
         };
 
@@ -185,5 +306,26 @@ mod tests {
         assert!(res.is_feasible);
         assert!(res.expected_coverage >= 0.70);
         assert!(res.expected_false_accept_rate <= 0.02);
+    }
+
+    #[test]
+    fn test_pareto_frontier() {
+        let mut pairs = Vec::new();
+        for _ in 0..100 {
+            pairs.push(DecisionOutcomePair::new(
+                0.95,
+                ReflexAction::Accept,
+                Outcome::Success,
+            ));
+        }
+        pairs.push(DecisionOutcomePair::new(
+            0.70,
+            ReflexAction::Verify,
+            Outcome::Failure,
+        ));
+
+        let frontier = ThresholdOptimizer::pareto_frontier(&pairs);
+        assert!(!frontier.is_empty());
+        assert!(frontier.iter().any(|p| p.is_pareto_optimal));
     }
 }

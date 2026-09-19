@@ -71,10 +71,6 @@ cargo test --workspace
 
 The workspace contains separate crates for the core model, providers, policy, telemetry, calibration, and CLI. CI runs on Linux, macOS, and Windows with Rust 1.88 and stable.
 
-## Roadmap
-
-The next release will focus on real-workload evaluation, shadow-mode calibration, additional evidence providers, and OpenTelemetry export.
-
 ## License
 
 [MIT](LICENSE)

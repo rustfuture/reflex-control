@@ -23,7 +23,7 @@ use std::time::Instant;
 
 #[derive(Args, Debug, Clone)]
 pub struct ExperimentArgs {
-    /// Evaluation protocol phase: dev, validation, calibration, freeze, blind, all
+    /// Evaluation phase: dev, validation, calibration, freeze, evaluation, all (legacy `blind` alias)
     #[arg(short, long, default_value = "all")]
     pub phase: String,
 
@@ -146,13 +146,15 @@ pub struct CandidateSummaryMetrics {
     pub non_frontier_tasks: usize,
     pub autonomous_passes: usize,
     pub false_accept_count: usize,
-    pub far_point: f64,
+    pub far_point: Option<f64>,
     pub far_wilson_ci: ConfidenceInterval,
     pub far_clopper_pearson_upper: Option<f64>,
     pub frontier_missed_count: usize,
+    pub frontier_miss_ci: ConfidenceInterval,
     pub false_alarm_count: usize,
-    pub fnr_point: f64,
-    pub fpr_point: f64,
+    pub unnecessary_frontier_call_ci: ConfidenceInterval,
+    pub frontier_miss_rate: Option<f64>,
+    pub unnecessary_frontier_call_rate: Option<f64>,
     pub autonomous_coverage_pct: f64,
     pub frontier_avoided_pct: f64,
     pub action_accuracy_pct: f64,
@@ -178,7 +180,7 @@ fn get_split_filepath(args: &ExperimentArgs, split: &str) -> String {
         "dev" => format!("fixtures/{prefix}_dev.json"),
         "validation" => format!("fixtures/{prefix}_validation.json"),
         "calibration" => format!("fixtures/{prefix}_calibration.json"),
-        "blind" => format!("fixtures/{prefix}_blind_test.json"),
+        "blind" | "evaluation" => format!("fixtures/{prefix}_blind_test.json"),
         _ => format!("fixtures/{prefix}_dev.json"),
     }
 }
@@ -186,7 +188,7 @@ fn get_split_filepath(args: &ExperimentArgs, split: &str) -> String {
 pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("╔══════════════════════════════════════════════════════════════════════════╗");
     println!("║       REFLEX CONTROL: ATOMIC EVIDENCE & GUARDED HYBRID BENCHMARK         ║");
-    println!("║       Safety Objective: No Observed Leakage & Coverage >= 40%            ║");
+    println!("║       Evaluation: safety routing, risk metrics, and coverage               ║");
     println!("╚══════════════════════════════════════════════════════════════════════════╝");
 
     let is_live_jev = args.provider.to_lowercase() == "jev";
@@ -210,20 +212,22 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
         "freeze" => {
             run_freeze_step(&args).await?;
         }
-        "blind" => {
-            run_blind_test_phase(&args).await?;
+        "blind" | "evaluation" => {
+            run_evaluation_phase(&args).await?;
         }
         "all" => {
-            println!("\n>>> Starting Sequential Evaluation Protocol (DEV -> VAL -> CAL -> FREEZE -> BLIND)...");
+            println!(
+                "\n>>> Starting Evaluation Protocol (DEV -> VAL -> CAL -> FREEZE -> EVALUATION)..."
+            );
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
             let (winning_tau, winning_quality) = run_calibration_phase(&args).await?;
             freeze_configuration(winning_tau, winning_quality)?;
-            run_blind_test_phase(&args).await?;
+            run_evaluation_phase(&args).await?;
         }
         other => {
             return Err(format!(
-                "Unknown phase '{other}'. Supported: dev, validation, calibration, freeze, blind, all"
+                "Unknown phase '{other}'. Supported: dev, validation, calibration, freeze, evaluation, legacy blind, all"
             )
             .into());
         }
@@ -558,7 +562,7 @@ async fn run_calibration_phase(
     ];
 
     println!("\n┌────────────┬──────────────┬─────────────┬──────────┬──────────┬──────────────┬──────────────┐");
-    println!("│ tau_accept │ QualityThresh│ FalseAccept │ FNR (%)  │ Coverage │ FrontierAvoid│ Cost / Task  │");
+    println!("│ tau_accept │ QualityThresh│ FalseAccept │ Frontier Miss Rate │ Coverage │ FrontierAvoid│ Cost / Task  │");
     println!("├────────────┼──────────────┼─────────────┼──────────┼──────────┼──────────────┼──────────────┤");
 
     let mut best_tau = 0.28;
@@ -613,20 +617,21 @@ async fn run_calibration_phase(
             &results,
             args.provider.eq_ignore_ascii_case("jev"),
         );
+        let miss_rate = format_rate_pct(m.frontier_miss_rate);
         println!(
-            "│   {:<8.2} │     {:<8.2} │      {:<6} │  {:>6.1}% │  {:>6.1}% │      {:>6.1}% │     ${:<7.4} │",
+            "│   {:<8.2} │     {:<8.2} │      {:<6} │       {:>10} │  {:>6.1}% │      {:>6.1}% │     ${:<7.4} │",
             tau,
             q_thresh,
             m.false_accept_count,
-            m.fnr_point * 100.0,
+            miss_rate,
             m.autonomous_coverage_pct,
             m.frontier_avoided_pct,
             m.avg_cost_per_task
         );
 
-        // Strict requirement: zero observed false accepts AND zero FNR
+        // Strict requirement: zero observed false accepts and frontier misses.
         if m.false_accept_count == 0
-            && m.fnr_point == 0.0
+            && m.frontier_miss_rate == Some(0.0)
             && m.autonomous_coverage_pct >= best_coverage
         {
             best_tau = tau;
@@ -637,7 +642,7 @@ async fn run_calibration_phase(
     println!("└────────────┴──────────────┴─────────────┴──────────┴──────────┴──────────────┴──────────────┘");
 
     println!(
-        "\n>>> Optimal Safe Operating Point: tau_accept = {best_tau:.2}, quality_thresh = {best_quality:.2} (0 False Accepts, 0% FNR, {best_coverage:.1}% Coverage)"
+        "\n>>> Best Observed Operating Point: tau_accept = {best_tau:.2}, quality_thresh = {best_quality:.2} (0 False Accepts, 0 frontier misses, {best_coverage:.1}% autonomous action coverage)"
     );
 
     Ok((best_tau, best_quality))
@@ -654,7 +659,7 @@ fn freeze_configuration(
         max_risk_small_reasoner: 0.58,
         mandatory_frontier_risk: 0.70,
         timestamp: Utc::now().to_rfc3339(),
-        validation_notes: "Frozen after DEV, VALIDATION, and CALIBRATION sweep. Zero false accepts and zero FNR observed on calibration.".to_string(),
+        validation_notes: "Parameters selected by the calibration sweep. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
     };
 
     let path = "fixtures/frozen_hybrid_config.json";
@@ -671,12 +676,12 @@ async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. BLIND TEST PHASE (EVALUATING 4 ARCHITECTURES ON HELD-OUT SYNTHETIC DATA)
+// 4. EVALUATION PHASE (LEGACY `blind` NAME; CONTEXTS RECUR ACROSS PARTITIONS)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async fn run_blind_test_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
-    println!(" PHASE 4: BLIND TEST EVALUATION (100 HELD-OUT CURATED SYNTHETIC TASKS)");
+    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS; NOT BLIND OR HELD-OUT)");
     println!("==========================================================================");
 
     let frozen_file = "fixtures/frozen_hybrid_config.json";
@@ -701,12 +706,12 @@ async fn run_blind_test_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     let tau_accept = args.risk_threshold.unwrap_or(frozen_tau);
     let quality_thresh = frozen_quality;
 
-    let blind_file = get_split_filepath(args, "blind");
-    let dataset = load_fresh_dataset(&blind_file)?;
+    let evaluation_file = get_split_filepath(args, "evaluation");
+    let dataset = load_fresh_dataset(&evaluation_file)?;
     println!(
         "Loaded {} tasks from {} (Range: {})",
         dataset.tasks.len(),
-        blind_file,
+        evaluation_file,
         dataset.metadata.temporal_range
     );
 
@@ -994,7 +999,7 @@ async fn run_blind_test_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     );
 
     println!("\n==========================================================================");
-    println!(" FINAL COMPARATIVE BENCHMARK REPORT (100 BLIND TEST TASKS)");
+    println!(" FINAL COMPARATIVE BENCHMARK REPORT (100 EVALUATION TASKS)");
     println!("==========================================================================");
     print_comparison_table(&[ma.clone(), mb.clone(), mc.clone(), me.clone()]);
 
@@ -1038,7 +1043,7 @@ fn calculate_candidate_metrics(
             false_accept_count += 1;
         }
 
-        // FNR: Defect / Frontier Leakage
+        // Missed frontier route: a frontier-required task without a frontier call.
         let needs_frontier = matches!(
             r.ground_truth_deferral,
             ReflexAction::DeferToFrontier | ReflexAction::Escalate
@@ -1050,7 +1055,7 @@ fn calculate_candidate_metrics(
             }
         }
 
-        // FPR: a task that does not require frontier review was escalated there.
+        // Unnecessary frontier call: a non-frontier task routed to the frontier.
         if !needs_frontier && r.frontier_call {
             safe_tasks_escalated += 1;
         }
@@ -1111,11 +1116,8 @@ fn calculate_candidate_metrics(
         .count();
     let non_frontier_tasks = total_tasks - frontier_tasks_total;
 
-    let far_point = if autonomous_passes > 0 {
-        false_accept_count as f64 / autonomous_passes as f64
-    } else {
-        0.0
-    };
+    let far_point =
+        (autonomous_passes > 0).then(|| false_accept_count as f64 / autonomous_passes as f64);
     let far_wilson = wilson_score_interval(false_accept_count, autonomous_passes, 0.95);
     let far_clopper_pearson_upper = if autonomous_passes > 0 && false_accept_count == 0 {
         Some(clopper_pearson_zero_upper_bound(autonomous_passes, 0.05))
@@ -1123,16 +1125,13 @@ fn calculate_candidate_metrics(
         None
     };
 
-    let fnr_point = if frontier_tasks_total > 0 {
-        frontier_tasks_missed as f64 / frontier_tasks_total as f64
-    } else {
-        0.0
-    };
-    let fpr_point = if non_frontier_tasks > 0 {
-        safe_tasks_escalated as f64 / non_frontier_tasks as f64
-    } else {
-        0.0
-    };
+    let frontier_miss_rate = (frontier_tasks_total > 0)
+        .then(|| frontier_tasks_missed as f64 / frontier_tasks_total as f64);
+    let frontier_miss_ci = wilson_score_interval(frontier_tasks_missed, frontier_tasks_total, 0.95);
+    let unnecessary_frontier_call_rate =
+        (non_frontier_tasks > 0).then(|| safe_tasks_escalated as f64 / non_frontier_tasks as f64);
+    let unnecessary_frontier_call_ci =
+        wilson_score_interval(safe_tasks_escalated, non_frontier_tasks, 0.95);
 
     let autonomous_cov = if total_tasks > 0 {
         (autonomous_count as f64 / total_tasks as f64) * 100.0
@@ -1203,9 +1202,11 @@ fn calculate_candidate_metrics(
         far_wilson_ci: far_wilson,
         far_clopper_pearson_upper,
         frontier_missed_count: frontier_tasks_missed,
+        frontier_miss_ci,
         false_alarm_count: safe_tasks_escalated,
-        fnr_point,
-        fpr_point,
+        unnecessary_frontier_call_ci,
+        frontier_miss_rate,
+        unnecessary_frontier_call_rate,
         autonomous_coverage_pct: autonomous_cov,
         frontier_avoided_pct: frontier_avoid,
         action_accuracy_pct: act_acc,
@@ -1228,6 +1229,11 @@ fn compute_total_cost(action: &ReflexAction, jev_cost: f64) -> f64 {
         ReflexAction::Verify => jev_cost + 0.005,
         _ => jev_cost + 0.030,
     }
+}
+
+fn format_rate_pct(rate: Option<f64>) -> String {
+    rate.map(|value| format!("{:.2}%", value * 100.0))
+        .unwrap_or_else(|| "N/A".to_string())
 }
 
 fn print_comparison_table(metrics: &[CandidateSummaryMetrics]) {
@@ -1293,23 +1299,33 @@ fn print_comparison_table(metrics: &[CandidateSummaryMetrics]) {
         format!("{}/{}", m.false_accept_count, m.autonomous_passes)
     });
     row("Observed FAR (point estimate)", &|m| {
-        format!("{:.2}%", m.far_point * 100.0)
+        format_rate_pct(m.far_point)
     });
     row("FAR 95% Wilson Upper Bound", &|m| {
-        format!("{:.2}%", m.far_wilson_ci.upper * 100.0)
+        if m.far_wilson_ci.sample_size > 0 {
+            format!("{:.2}%", m.far_wilson_ci.upper * 100.0)
+        } else {
+            "N/A (n=0)".to_string()
+        }
     });
     row("FAR 95% exact upper (0 errors)", &|m| {
         m.far_clopper_pearson_upper
             .map(|upper| format!("{:.2}%", upper * 100.0))
             .unwrap_or_else(|| "n/a".to_string())
     });
-    row("Defect Leakage / FNR (count)", &|m| {
+    row("Frontier-Required Tasks Missed (count)", &|m| {
         format!("{}/{}", m.frontier_missed_count, m.frontier_required_tasks)
     });
-    row("False Alarm / FPR (count)", &|m| {
+    row("Frontier Miss Rate (95% Wilson CI)", &|m| {
+        m.frontier_miss_ci.format_pct()
+    });
+    row("Unnecessary Frontier Calls (count)", &|m| {
         format!("{}/{}", m.false_alarm_count, m.non_frontier_tasks)
     });
-    row("Autonomous Coverage (%)", &|m| {
+    row("Unnecessary Frontier-Call Rate (95% Wilson CI)", &|m| {
+        m.unnecessary_frontier_call_ci.format_pct()
+    });
+    row("Autonomous Action Coverage (%)", &|m| {
         format!("{:.1}%", m.autonomous_coverage_pct)
     });
     row("Frontier Calls Avoided (%)", &|m| {
@@ -1351,10 +1367,10 @@ fn save_markdown_artifact(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut md = String::new();
     md.push_str("# Reflex Control: Guarded Hybrid Architecture Empirical Benchmark\n\n");
-    md.push_str("**Evaluation Dataset**: 100 held-out, curated synthetic tasks (`fixtures/v2_eval_blind_test.json`)\n\n");
+    md.push_str("**Evaluation Dataset**: 100 curated synthetic tasks (`fixtures/v2_eval_blind_test.json`; legacy filename)\n\n");
     md.push_str(&format!("**Provider mode**: `{provider}`\n\n"));
     md.push_str(
-        "> This is a generated experimental report, not production validation. Zero observed errors do not prove zero risk. FAR uses autonomous accepts/terminations, FNR uses frontier-required tasks, and FPR uses non-frontier tasks.\n\n",
+        "> This is a generated experimental report, not production validation. The fixture reuses task contexts across its partitions, so this is not a blind or independent held-out evaluation. Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
     );
     md.push_str("### 1. Comparative Performance Matrix\n\n");
     md.push_str("| Metric ");
@@ -1373,13 +1389,16 @@ fn save_markdown_artifact(
             "Observed False Accepts",
             Box::new(|m| format!("{}/{}", m.false_accept_count, m.autonomous_passes)),
         ),
-        (
-            "Observed FAR",
-            Box::new(|m| format!("{:.2}%", m.far_point * 100.0)),
-        ),
+        ("Observed FAR", Box::new(|m| format_rate_pct(m.far_point))),
         (
             "FAR 95% Wilson Upper Bound",
-            Box::new(|m| format!("{:.2}%", m.far_wilson_ci.upper * 100.0)),
+            Box::new(|m| {
+                if m.far_wilson_ci.sample_size > 0 {
+                    format!("{:.2}%", m.far_wilson_ci.upper * 100.0)
+                } else {
+                    "N/A (n=0)".to_string()
+                }
+            }),
         ),
         (
             "FAR 95% exact upper (0 errors)",
@@ -1390,29 +1409,29 @@ fn save_markdown_artifact(
             }),
         ),
         (
-            "Defect Leakage / FNR",
+            "Frontier Miss Rate / 95% Wilson CI",
             Box::new(|m| {
                 format!(
-                    "{}/{} ({:.1}%)",
+                    "{}/{} ({})",
                     m.frontier_missed_count,
                     m.frontier_required_tasks,
-                    m.fnr_point * 100.0
+                    m.frontier_miss_ci.format_pct()
                 )
             }),
         ),
         (
-            "False Alarm / FPR",
+            "Unnecessary Frontier-Call Rate / 95% Wilson CI",
             Box::new(|m| {
                 format!(
-                    "{}/{} ({:.1}%)",
+                    "{}/{} ({})",
                     m.false_alarm_count,
                     m.non_frontier_tasks,
-                    m.fpr_point * 100.0
+                    m.unnecessary_frontier_call_ci.format_pct()
                 )
             }),
         ),
         (
-            "Autonomous Coverage",
+            "Autonomous Action Coverage",
             Box::new(|m| format!("{:.1}%", m.autonomous_coverage_pct)),
         ),
         (
@@ -1547,9 +1566,25 @@ mod tests {
         assert_eq!(metrics.false_accept_count, 1);
         assert_eq!(metrics.frontier_missed_count, 2);
         assert_eq!(metrics.false_alarm_count, 1);
-        assert!((metrics.far_point - 0.5).abs() < f64::EPSILON);
-        assert!((metrics.fnr_point - 1.0).abs() < f64::EPSILON);
-        assert!((metrics.fpr_point - (1.0 / 3.0)).abs() < f64::EPSILON);
+        assert!((metrics.far_point.unwrap() - 0.5).abs() < f64::EPSILON);
+        assert!((metrics.frontier_miss_rate.unwrap() - 1.0).abs() < f64::EPSILON);
+        assert!(
+            (metrics.unnecessary_frontier_call_rate.unwrap() - (1.0 / 3.0)).abs() < f64::EPSILON
+        );
+        assert_eq!(metrics.frontier_miss_ci.sample_size, 2);
+        assert_eq!(metrics.unnecessary_frontier_call_ci.sample_size, 3);
         assert!((metrics.autonomous_coverage_pct - 60.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn candidate_rates_with_empty_denominators_are_unavailable() {
+        let metrics = calculate_candidate_metrics("empty", &[], false);
+        assert_eq!(metrics.far_point, None);
+        assert_eq!(metrics.frontier_miss_rate, None);
+        assert_eq!(metrics.unnecessary_frontier_call_rate, None);
+        assert_eq!(metrics.far_wilson_ci.sample_size, 0);
+        assert_eq!(metrics.frontier_miss_ci.sample_size, 0);
+        assert_eq!(metrics.unnecessary_frontier_call_ci.sample_size, 0);
+        assert_eq!(format_rate_pct(metrics.frontier_miss_rate), "N/A");
     }
 }

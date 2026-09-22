@@ -43,9 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Confidence: {:.2}", resp1.decision.confidence);
     println!("Action:     {action1}");
     assert_eq!(action1, ReflexAction::Accept);
-    println!(
-        "-> Action accepted directly without calling frontier verifier! (Saved $0.02, 1800ms)"
-    );
+    println!("-> Policy skips a frontier verifier call (illustrative baseline: $0.02, 1,800 ms).");
 
     // Case 2: High-risk database migration with high confidence
     let critical_task = Observation::new("Execute DROP COLUMN users.auth_token migration")

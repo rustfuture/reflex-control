@@ -121,12 +121,20 @@ pub fn execute(
     println!("Evaluated Dataset:        {dataset_name}");
     println!("Provenance:               {dataset_provenance}");
     println!("Evaluated Samples:        {}", pairs.len());
-    let defects = pairs.iter().filter(|p| !p.is_success()).count();
-    println!(
-        "Observed Defects:         {} ({:.2}%)",
-        defects,
-        (defects as f64 / pairs.len() as f64) * 100.0
-    );
+    let resolved_samples = pairs.iter().filter(|p| p.outcome.is_resolved()).count();
+    let unresolved_samples = pairs.len() - resolved_samples;
+    let defects = pairs.iter().filter(|p| p.outcome.is_failure()).count();
+    println!("Resolved Outcomes:       {resolved_samples}");
+    println!("Unresolved Excluded:     {unresolved_samples}");
+    if resolved_samples > 0 {
+        println!(
+            "Observed Defects:        {} ({:.2}% of resolved outcomes)",
+            defects,
+            (defects as f64 / resolved_samples as f64) * 100.0
+        );
+    } else {
+        println!("Observed Defects:        N/A (no resolved outcomes)");
+    }
     println!(
         "Optimization Target:      Frontier calls avoided >= 40-50% with FAR < 1.0% and FNR < 1.0%"
     );
@@ -160,16 +168,8 @@ pub fn execute(
             optimal_targets.push(p.clone());
         }
 
-        let far_str = format!(
-            "{:.2}% [<{:.2}%]",
-            p.false_accept_rate * 100.0,
-            p.far_ci.upper * 100.0
-        );
-        let fnr_str = format!(
-            "{:.2}% [<{:.2}%]",
-            p.false_negative_rate * 100.0,
-            p.fnr_ci.upper * 100.0
-        );
+        let far_str = p.far_ci.format_pct();
+        let fnr_str = p.fnr_ci.format_pct();
 
         println!(
             "{:<6.2} | {:>7.1}% | {:>12.1}% | {:>9.1}% | {:>18} | {:>18} | {:<16}",
@@ -203,25 +203,21 @@ pub fn execute(
             best.cost_reduction_pct
         );
         println!(
-            "  - Observed False Accept Rate:      {:.2}% [95% CI: {:.2}% – {:.2}%]",
-            best.false_accept_rate * 100.0,
-            best.far_ci.lower * 100.0,
-            best.far_ci.upper * 100.0
+            "  - Observed False Accept Rate:      {}",
+            best.far_ci.format_pct()
         );
         println!(
-            "  - Observed False Negative Rate:    {:.2}% [95% CI: {:.2}% – {:.2}%]",
-            best.false_negative_rate * 100.0,
-            best.fnr_ci.lower * 100.0,
-            best.fnr_ci.upper * 100.0
+            "  - Observed False Negative Rate:    {}",
+            best.fnr_ci.format_pct()
         );
 
         if best.is_statistically_proven {
             println!("  - Statistical Rigor:               STATISTICALLY PROVEN < 1.0% (Both FAR and FNR upper bounds < 1.0% at 95% confidence).");
         } else {
             println!(
-                "  - Statistical Rigor:               EARLY SIGNAL ONLY (95% upper bounds: FAR {:.2}%, FNR {:.2}%; both must be <1.0%).",
-                best.far_ci.upper * 100.0,
-                best.fnr_ci.upper * 100.0
+                "  - Statistical Rigor:               EARLY SIGNAL ONLY (FAR {}, FNR {}; both upper bounds must be <1.0%).",
+                best.far_ci.format_pct(),
+                best.fnr_ci.format_pct()
             );
         }
     } else {

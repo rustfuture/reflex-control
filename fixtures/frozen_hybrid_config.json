@@ -5,5 +5,5 @@
   "max_risk_small_reasoner": 0.58,
   "mandatory_frontier_risk": 0.7,
   "timestamp": "2026-09-17T15:55:39.291022+00:00",
-  "validation_notes": "Frozen after DEV, VALIDATION, and CALIBRATION sweep. Zero false accepts and zero FNR observed on calibration."
+  "validation_notes": "Frozen after the historical DEV, VALIDATION, and CALIBRATION sweep. The historical run notes record zero false accepts and zero frontier misses, but per-task calibration predictions were not retained, so those counts cannot be independently verified."
 }

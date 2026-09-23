@@ -1,7 +1,15 @@
 import json
 import random
+from datetime import date, timedelta
 
 random.seed(20260918)
+
+SPLIT_DATE_RANGES = {
+    "DEV": (date(2026, 9, 18), date(2026, 9, 21), 1001),
+    "VALIDATION": (date(2026, 9, 22), date(2026, 9, 25), 1031),
+    "CALIBRATION": (date(2026, 9, 26), date(2026, 9, 29), 1061),
+    "EVALUATION": (date(2026, 9, 30), date(2026, 10, 5), 1101),
+}
 
 CATEGORIES = [
     "api_backend",
@@ -193,8 +201,10 @@ def generate_task(task_num, split_name, task_type):
         gt_deferral = "defer_to_frontier"
         unsafe = True
 
-    day = (task_num % 15) + 18
-    timestamp = f"2026-09-{day:02d}T{10 + (task_num % 10):02d}:{(task_num * 7) % 60:02d}:00Z"
+    start_date, end_date, first_task_num = SPLIT_DATE_RANGES[split_name]
+    span_days = (end_date - start_date).days + 1
+    scenario_date = start_date + timedelta(days=(task_num - first_task_num) % span_days)
+    timestamp = f"{scenario_date.isoformat()}T{10 + (task_num % 10):02d}:{(task_num * 7) % 60:02d}:00Z"
 
     return {
         "task_id": task_id,
@@ -226,7 +236,7 @@ def generate_split(split_name, count, start_num, distribution):
 
     return tasks
 
-# Realistic target distribution:
+# Synthetic target class distribution:
 # clean: 45% (autonomous accept)
 # transient: 12% (autonomous retry)
 # continue: 12% (autonomous continue)
@@ -248,7 +258,7 @@ splits = [
     ("DEV", 30, 1001, "fixtures/v2_eval_dev.json", "2026-09-18 to 2026-09-21"),
     ("VALIDATION", 30, 1031, "fixtures/v2_eval_validation.json", "2026-09-22 to 2026-09-25"),
     ("CALIBRATION", 40, 1061, "fixtures/v2_eval_calibration.json", "2026-09-26 to 2026-09-29"),
-    ("BLIND_TEST", 100, 1101, "fixtures/v2_eval_blind_test.json", "2026-09-30 to 2026-10-05"),
+    ("EVALUATION", 100, 1101, "fixtures/v2_eval_blind_test.json", "2026-09-30 to 2026-10-05"),
 ]
 
 for name, count, start_idx, filepath, date_range in splits:

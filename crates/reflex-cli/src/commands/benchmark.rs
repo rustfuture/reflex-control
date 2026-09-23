@@ -140,7 +140,7 @@ pub async fn execute(
 
     let provider: Arc<dyn DecisionProvider> = if is_live_jev {
         let config = JevConfig::from_env()?;
-        println!("Endpoint:       {}", config.endpoint);
+        println!("Endpoint:       configured (URL redacted)");
         println!("Model:          {}", config.model);
         Arc::new(JevProvider::new_with_formulations(config, form_config))
     } else {
@@ -605,10 +605,10 @@ pub async fn execute(
             );
         } else {
             println!(
-                "  [EARLY SIGNAL ONLY] Observed FAR is {:.2}%, but 95% upper bound is {:.2}% >= 1.00%. Sample size (N={}) yields upper bound insufficient to formally guarantee <1.00%.",
-                vm.false_accept_rate * 100.0,
+                "  [EARLY SIGNAL ONLY] FAR {}; its 95% upper bound is {:.2}% and the resolved autonomous-pass cohort is n={}. The data do not establish FAR <1.00%.",
+                vm.far_ci.format_pct(),
                 vm.far_ci.upper * 100.0,
-                vm.total_samples
+                vm.far_ci.sample_size
             );
         }
         println!();
@@ -681,7 +681,7 @@ async fn run_formulation_comparison(
     let (prov_a, prov_b): (Arc<dyn DecisionProvider>, Arc<dyn DecisionProvider>) = if is_live_jev {
         let config_a = JevConfig::from_env()?;
         let config_b = JevConfig::from_env()?;
-        println!("Endpoint:           {}", config_a.endpoint);
+        println!("Endpoint:           configured (URL redacted)");
         println!("Model:              {}", config_a.model);
         (
             Arc::new(JevProvider::new_with_formulations(
@@ -1109,16 +1109,16 @@ async fn run_formulation_comparison(
         "Defect F1", vm_a.f1, vm_b.f1
     );
     println!(
-        "{:<25} | {:>20.1}% | {:>20.1}%",
+        "{:<25} | {:>40} | {:>40}",
         "False Accept Rate (FAR)",
-        vm_a.false_accept_rate * 100.0,
-        vm_b.false_accept_rate * 100.0
+        vm_a.far_ci.format_pct(),
+        vm_b.far_ci.format_pct()
     );
     println!(
-        "{:<25} | {:>20.1}% | {:>20.1}%",
+        "{:<25} | {:>40} | {:>40}",
         "False Alarm Rate",
-        vm_a.false_positive_rate * 100.0,
-        vm_b.false_positive_rate * 100.0
+        vm_a.fpr_ci.format_pct(),
+        vm_b.fpr_ci.format_pct()
     );
     println!(
         "{:<25} | {:>20.1}% | {:>20.1}%",
@@ -1240,8 +1240,10 @@ async fn run_formulation_comparison(
     println!("Saved to fixtures/frozen_configuration.json:");
     println!("{frozen_json}");
     println!("─────────────────────────────────────────────────────────────────────────");
-    println!("Next Step: Run benchmark on held-out test set:");
-    println!("  reflex benchmark --provider jev --dataset fixtures/held_out_100.json --formulation frozen");
+    println!("Next Step: Run benchmark on a separately collected evaluation dataset:");
+    println!(
+        "  reflex benchmark --provider jev --dataset path/to/evaluation.json --formulation frozen"
+    );
     println!("=========================================================================\n");
 
     Ok(())

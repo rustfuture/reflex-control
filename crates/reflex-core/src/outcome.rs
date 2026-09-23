@@ -20,6 +20,10 @@ impl Outcome {
     pub fn is_failure(&self) -> bool {
         matches!(self, Outcome::Failure)
     }
+
+    pub fn is_resolved(&self) -> bool {
+        matches!(self, Outcome::Success | Outcome::Failure)
+    }
 }
 
 impl fmt::Display for Outcome {

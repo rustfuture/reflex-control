@@ -1,32 +1,29 @@
-# Guarded Hybrid v0.1 evaluation record
+# Candidate E historical aggregate report
 
-## Provenance
+This page preserves the aggregate figures recorded for the Guarded Hybrid (Candidate E) experiment. The repository does not contain task-level Candidate E predictions or a run manifest, so the figures below cannot be independently reproduced from this checkout.
 
-- Dataset: `fixtures/v2_eval_blind_test.json`
-- Size: 100 held-out, curated synthetic tasks
-- Provider: live TypeSafe Jev inference for atomic semantic signals
-- Frozen configuration: `fixtures/frozen_hybrid_config.json`
-- Architecture: Candidate E / Guarded Hybrid
-- Production validation: none
+## Provenance and limits
 
-## Observed result
+- Fixture: `fixtures/v2_eval_blind_test.json` (100 curated synthetic tasks; `blind_test` is a legacy filename).
+- The fixture has 32 distinct task contexts. The same contexts appear in the development (21 shared contexts), validation (21), and calibration (22) partitions. It is not a blind or context-independent held-out evaluation.
+- The historical report describes the run as using live TypeSafe Jev inference. Raw per-task responses, exact model/provider identity, and a run manifest were not retained, so that claim and its outputs cannot be independently checked here.
+- The fixture generator describes synthetic scenario dates. They are not collection timestamps.
+- No production validation is included.
 
-| Measure | Count | Rate |
-| :--- | :---: | :---: |
-| Autonomous coverage | 69/100 | 69.0% |
-| Frontier calls avoided | 69/100 | 69.0% |
-| Defect leakage / FNR | 0/31 | 0.0% |
-| False alarms / FPR | 0/69 | 0.0% |
-| Unsafe-to-accept tasks | 43/100 | 43.0% |
+## Figures recorded by the historical report
 
-The 31 frontier-required tasks are the denominator for defect leakage. The 69 remaining tasks are the denominator for false alarms. The 43 unsafe-to-accept tasks comprise those 31 tasks plus 12 transient failures that must be retried instead of accepted.
+| Measure | Recorded count | Denominator and meaning |
+| :--- | :---: | :--- |
+| Autonomous action coverage | 69/100 | Accept, terminate, retry, or continue actions; not necessarily verifier-free acceptance |
+| Frontier calls avoided | 69/100 | Tasks for which the recorded summary says no frontier call was made; small-reasoner calls are a separate path |
+| Frontier-required tasks missed | 0/31 | Missed routes among tasks whose ground-truth deferral was frontier/escalate |
+| Unnecessary frontier calls | 0/69 | Frontier-routed tasks among tasks labeled non-frontier |
+| Unsafe-to-accept tasks | 43/100 | Label count; 31 frontier-required tasks plus 12 transient tasks whose expected action is retry |
 
-The historical aggregate did not retain Candidate E's count of `accept`/`terminate` decisions, so a false accept rate with the correct predicted-accept denominator cannot be reconstructed. It recorded zero false-accept events; no FAR percentage or confidence interval is claimed here.
+The two 69/100 figures happen to match in this aggregate; their definitions are different. The 43 unsafe-to-accept labels are not interchangeable with the 31 frontier-required labels. Neither label set provides independent confirmation that the prediction was correct.
 
-## Statistical limits
+The saved summary does not include the count of `Accept`/`Terminate` predictions, so the false accept rate (false accepts divided by autonomous passes) cannot be reconstructed. This page does not report a FAR point estimate or confidence interval.
 
-- The approximate 95% Wilson interval for 69/100 coverage is 59.4%–77.2%.
-- For 0 observed leakage events among 31 frontier-required tasks, the 95% Wilson upper bound is approximately 11.0%.
-- The one-sided 95% Clopper-Pearson upper bound for the same zero-error observation is approximately 9.2%.
+## Conditional statistical bounds
 
-Zero observed errors does not prove a true zero risk rate. The controlled synthetic workload may not represent production traffic, and live provider outputs may vary across runs.
+If the historical counts are correct, approximate two-sided 95% Wilson intervals are 59.4%–77.2% for 69/100 autonomous actions, 0%–10.9% for 0/31 frontier misses, and 0%–5.3% for 0/69 unnecessary frontier calls. These are conditional bounds on the recorded counts, not independently verified results. Zero observed events does not establish zero risk.

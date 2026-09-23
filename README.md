@@ -41,10 +41,10 @@ Reflex Control couples zero-cost deterministic runtime checks (test suites, git 
 ## Key Capabilities
 
 - **Guarded Hybrid Decision Architecture**: Combines deterministic invariants with narrow, model-evaluated atomic propositions.
-- **Inviolable Hard Safety Veto**: Prevents defect leakage by enforcing policy overrides that no confidence score can bypass.
-- **Calibrated Frontier Cost Elimination**: Safely handles routine tasks autonomously (69% autonomous coverage observed in frozen v0.1 benchmark) without incurring latency or financial cost from frontier calls.
-- **Shadow Mode Telemetry**: Evaluates agent workflows side-by-side in production without blocking live orchestrator execution, recording decisions to SQLite (`reflex.db`).
-- **Reproducible Evaluation Protocol**: Fully specified, frozen benchmark fixtures with reproducible seed runs and statistical confidence intervals.
+- **Hard Safety Veto**: Applies configured risk and evidence rules before confidence-based acceptance; see the policy code and examples for the implemented behavior.
+- **Threshold Calibration**: Includes tools for measuring decision metrics and estimating confidence intervals on labeled outcomes.
+- **Shadow Mode Telemetry**: Records predictions beside an orchestrator's action in SQLite; the included example uses a mock provider and an in-memory database.
+- **Curated Evaluation Fixtures**: Includes a seeded synthetic-data generator and frozen policy configuration. These fixtures do not establish production reliability.
 
 ---
 
@@ -92,27 +92,7 @@ reflex run --provider mock \
   --risk low
 ```
 
-Output:
-```text
-================ Reflex Control Decision Execution ================
-Provider:       Mock/Synthetic
-Task ID:        session-synthetic-fd920f2f-e95b-4092-a185-0688e313fbd8
-Risk Level:     low
-Evaluating decision...
-
-=== Decision Result ===
-Decision ID:    cf419b9d-3e10-42d7-80c8-789a7451c205
-Provider:       Mock/Synthetic
-Selected:       true
-Confidence:     0.9900
-Probabilities:  [("true", 0.99), ("false", 0.01)]
-Policy Action:  accept
-Latency:        5 ms
-Estimated Cost: $0.000100
-
-Telemetry Record Stored: reflex.db
-====================================================================
-```
+The output includes the selected action, confidence, and telemetry record. Identifiers and measured latency vary between runs.
 
 ### 3. Using Live TypeSafe Jev
 
@@ -149,7 +129,7 @@ Task 1:     Fix typos in documentation
 Risk:       low
 Confidence: 0.96
 Action:     accept
--> Action accepted directly without calling frontier verifier! (Saved $0.02, 1800ms)
+-> Policy skips a frontier verifier call (illustrative baseline: $0.02, 1,800 ms).
 
 Task 2:     Execute DROP COLUMN users.auth_token migration
 Risk:       critical
@@ -173,7 +153,7 @@ Effective Action:             defer_to_frontier
 
 ### Shadow Mode Sidecar Example
 
-Demonstrates running Reflex Control alongside an existing agent orchestrator to log shadow predictions without mutating execution:
+Demonstrates recording one mock prediction alongside a sample orchestrator action without mutating execution:
 
 ```bash
 cargo run -p example-shadow-mode
@@ -181,25 +161,22 @@ cargo run -p example-shadow-mode
 
 ---
 
-## Evaluation Benchmark & Measured Results
+## Evaluation Evidence & Historical Results
 
-The official v0.1 evaluation is documented in [`docs/experiments/live_experiment_hybrid_results.md`](docs/experiments/live_experiment_hybrid_results.md) and evaluated on [`fixtures/v2_eval_blind_test.json`](fixtures/v2_eval_blind_test.json).
+The repository preserves historical Candidate E aggregates in [`docs/experiments/live_experiment_hybrid_results.md`](docs/experiments/live_experiment_hybrid_results.md). The report records 69/100 autonomous actions and 69/100 frontier calls avoided, plus 0/31 missed frontier-required tasks and 0/69 unnecessary frontier calls. These are historical aggregate claims: task-level predictions and the run manifest were not retained, so the counts cannot be independently reproduced from this checkout.
 
-### Frozen v0.1 Performance
+The fixture filename says `blind_test`, but the 100-task partition contains only 32 distinct task contexts. It shares 21 contexts with the development split, 21 with validation, and 22 with calibration. It therefore is not a blind or independent held-out evaluation. The report records live Jev inference, but its outputs and exact run identity are unavailable for verification. This is curated synthetic evidence, not production validation.
 
-| Metric | Observed Count | Measured Rate |
-| :--- | :---: | :---: |
-| **Autonomous coverage** | 69 / 100 | **69.0%** |
-| **Frontier calls eliminated** | 69 / 100 | **69.0%** |
-| **Frontier-required tasks routed correctly** | 31 / 31 | **100.0%** |
-| **Observed defect leakage (FNR)** | 0 / 31 | **0.0%** |
-| **Observed false alarms (FPR)** | 0 / 69 | **0.0%** |
+The reported counts have approximate two-sided 95% Wilson intervals of 59.4%–77.2% for 69/100 autonomous actions, 0%–10.9% for 0/31 frontier misses, and 0%–5.3% for 0/69 unnecessary frontier calls. These bounds describe the reported sample counts only; zero observed events do not establish zero risk.
 
-### Statistical Bounds
+### Metric contract
 
-- **Autonomous Coverage (69/100)**: Approximate 95% Wilson score interval is **59.4% – 77.2%**.
-- **Zero Observed Leakage (0/31)**: The 95% Wilson upper bound is **~11.0%**; one-sided 95% Clopper-Pearson upper bound is **~9.2%**.
-- *Methodological note*: Controlled synthetic benchmarks evaluate decision-gate logic reproducibly but do not constitute unbounded production reliability guarantees.
+- **Resolved outcome** in telemetry/calibration metrics means an explicit `Success` or `Failure`. `Partial`, `Unknown`, and missing outcomes are shown separately and excluded from outcome-based risk, calibration, and optimizer metrics.
+- **Telemetry FAR** is false accepts divided by resolved decisions whose recorded action is autonomous `Accept`/`Terminate`. **Threshold-evaluation FAR** uses a candidate policy cohort: `Terminate`, plus eligible `Accept`/`Verify` decisions at or above the candidate confidence threshold; its numerator and denominator exclude unresolved outcomes. Candidate E's experiment FAR instead divides tasks labeled `is_unsafe_to_accept` and predicted `Accept`/`Terminate` by all predicted `Accept`/`Terminate` tasks; it depends on those labels, not a recorded execution outcome.
+- **Frontier miss rate** in the Candidate E experiment is missed frontier-required tasks divided by all tasks labeled frontier-required. It is a routing metric, not a general defect-leakage rate.
+- **Unnecessary frontier-call rate** in the Candidate E experiment is frontier-routed tasks labeled non-frontier divided by all tasks labeled non-frontier.
+- **Autonomous action coverage** in Candidate E is `Accept`/`Terminate`/`Retry`/`Continue` actions divided by all tasks. **Frontier calls avoided** is tasks without a frontier call divided by all tasks. The two happened to have the same reported count but are calculated independently.
+- Any rate with a zero denominator is reported as unavailable; a zero count alone is not a zero risk estimate.
 
 ---
 
@@ -209,7 +186,7 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 
 | Dataset File | Role | Sample Count |
 | :--- | :--- | :---: |
-| `fixtures/v2_eval_blind_test.json` | Held-out frozen evaluation benchmark evaluated under live Jev inference | 100 tasks |
+| `fixtures/v2_eval_blind_test.json` | Curated synthetic evaluation partition (legacy filename; contexts recur across splits) | 100 tasks |
 | `fixtures/v2_eval_calibration.json` | Systematic grid sweep split for threshold calibration ($\tau_{\text{accept}}, \theta_{\text{clean}}$) | 40 tasks |
 | `fixtures/v2_eval_validation.json` | Architecture comparison split (Guarded Hybrid vs Deterministic Rules) | 30 tasks |
 | `fixtures/v2_eval_dev.json` | Development & connectivity smoke testing split | 30 tasks |

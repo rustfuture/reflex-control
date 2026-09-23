@@ -32,7 +32,7 @@ pub async fn execute(
 
     let provider: Arc<dyn DecisionProvider> = if is_live_jev {
         let config = JevConfig::from_env()?;
-        println!("Endpoint:       {}", config.endpoint);
+        println!("Endpoint:       configured (URL redacted)");
         println!("Model:          {}", config.model);
         Arc::new(JevProvider::new(config))
     } else {

@@ -66,19 +66,23 @@ impl ThresholdOptimizer {
         pairs: &[DecisionOutcomePair],
         tau: f64,
     ) -> (f64, f64, f64, f64, f64, usize, usize, usize, usize) {
-        if pairs.is_empty() {
+        let resolved_pairs: Vec<_> = pairs
+            .iter()
+            .filter(|pair| pair.outcome.is_resolved())
+            .collect();
+        if resolved_pairs.is_empty() {
             return (0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0);
         }
-        let n = pairs.len() as f64;
+        let n = resolved_pairs.len() as f64;
         let mut accepted_total = 0usize;
         let mut accepted_failed = 0usize;
         let mut total_actual_failures = 0usize;
         let mut escalated_total = 0usize;
         let mut cheap_verified_resolved = 0usize;
 
-        for p in pairs {
+        for p in resolved_pairs {
             let actual_success = p.is_success();
-            if !actual_success {
+            if p.outcome.is_failure() {
                 total_actual_failures += 1;
             }
 
@@ -148,7 +152,7 @@ impl ThresholdOptimizer {
         pairs: &[DecisionOutcomePair],
         constraints: &OptimizationConstraints,
     ) -> OptimizationResult {
-        if pairs.is_empty() {
+        if pairs.is_empty() || pairs.iter().all(|pair| !pair.outcome.is_resolved()) {
             let default_ci = ConfidenceInterval::default();
             return OptimizationResult {
                 current_threshold: constraints.current_threshold,
@@ -167,7 +171,12 @@ impl ThresholdOptimizer {
                 calls_avoided_ci: default_ci,
                 is_feasible: false,
                 is_statistically_proven: false,
-                explanation: "Dataset is empty; cannot optimize threshold.".to_string(),
+                explanation: if pairs.is_empty() {
+                    "Dataset is empty; cannot optimize threshold.".to_string()
+                } else {
+                    "Dataset contains no resolved success/failure outcomes; cannot optimize threshold."
+                        .to_string()
+                },
             };
         }
 
@@ -184,9 +193,12 @@ impl ThresholdOptimizer {
         let mut step = 500;
         while step <= 995 {
             let tau = step as f64 / 1000.0;
-            let (cov, far, fnr, _, _, _, _, _, _) = Self::evaluate_cutoff(pairs, tau);
+            let (cov, far, fnr, _, _, _, accepted_total, total_actual_failures, _) =
+                Self::evaluate_cutoff(pairs, tau);
 
-            let satisfies_safety = far <= constraints.max_false_accept_rate
+            let has_safety_denominators = accepted_total > 0 && total_actual_failures > 0;
+            let satisfies_safety = has_safety_denominators
+                && far <= constraints.max_false_accept_rate
                 && fnr <= constraints.max_false_negative_rate;
             let satisfies_coverage = cov >= constraints.min_coverage;
 
@@ -205,7 +217,8 @@ impl ThresholdOptimizer {
             } else if !found_feasible {
                 // Best effort safety first: satisfy FAR & FNR if possible
                 let is_better = (satisfies_safety && cov > best_coverage)
-                    || (far <= constraints.max_false_accept_rate
+                    || (has_safety_denominators
+                        && far <= constraints.max_false_accept_rate
                         && (cov > best_coverage || best_far > constraints.max_false_accept_rate));
                 if is_better {
                     best_threshold = tau;
@@ -231,13 +244,19 @@ impl ThresholdOptimizer {
 
         let far_ci = wilson_score_interval(exp_accepted_failed, exp_accepted_total, 0.95);
         let fnr_ci = wilson_score_interval(exp_accepted_failed, exp_total_actual_failures, 0.95);
-        let coverage_ci = wilson_score_interval(exp_accepted_total, pairs.len(), 0.95);
-        let calls_avoided_ci = wilson_score_interval(exp_calls_avoided_count, pairs.len(), 0.95);
+        let resolved_count = pairs
+            .iter()
+            .filter(|pair| pair.outcome.is_resolved())
+            .count();
+        let coverage_ci = wilson_score_interval(exp_accepted_total, resolved_count, 0.95);
+        let calls_avoided_ci = wilson_score_interval(exp_calls_avoided_count, resolved_count, 0.95);
 
         let is_statistically_proven = far_ci
             .is_upper_bound_proven(constraints.max_false_accept_rate)
             && fnr_ci.is_upper_bound_proven(constraints.max_false_negative_rate);
 
+        let far_observed = format_rate(exp_far, exp_accepted_total);
+        let fnr_observed = format_rate(exp_fnr, exp_total_actual_failures);
         let explanation = if found_feasible {
             let proven_tag = if is_statistically_proven {
                 format!(
@@ -255,20 +274,20 @@ impl ThresholdOptimizer {
                 )
             };
             format!(
-                "Optimal calibrated threshold is {:.3}. Observed FAR = {:.2}%, observed FNR = {:.2}%, with {:.1}% coverage ({:.1}% verifier calls avoided). {}",
+                "Optimal calibrated threshold is {:.3}. Observed FAR = {}, observed FNR = {}, with {:.1}% coverage ({:.1}% verifier calls avoided). {}",
                 best_threshold,
-                exp_far * 100.0,
-                exp_fnr * 100.0,
+                far_observed,
+                fnr_observed,
                 exp_cov * 100.0,
                 exp_calls_avoided,
                 proven_tag
             )
         } else {
             format!(
-                "Recommended best-effort safety threshold is {:.3} (observed FAR: {:.2}%, observed FNR: {:.2}%, Coverage: {:.1}%).",
+                "Recommended best-effort safety threshold is {:.3} (observed FAR: {}, observed FNR: {}, Coverage: {:.1}%).",
                 best_threshold,
-                exp_far * 100.0,
-                exp_fnr * 100.0,
+                far_observed,
+                fnr_observed,
                 exp_cov * 100.0
             )
         };
@@ -296,7 +315,7 @@ impl ThresholdOptimizer {
 
     /// Computes the Cost vs Risk Pareto Frontier across candidate thresholds
     pub fn pareto_frontier(pairs: &[DecisionOutcomePair]) -> Vec<ParetoPoint> {
-        if pairs.is_empty() {
+        if pairs.is_empty() || pairs.iter().all(|pair| !pair.outcome.is_resolved()) {
             return Vec::new();
         }
 
@@ -313,7 +332,11 @@ impl ThresholdOptimizer {
                 let fnr_ci = wilson_score_interval(acc_failed, total_fail, 0.95);
                 let is_statistically_proven =
                     far_ci.is_upper_bound_proven(0.01) && fnr_ci.is_upper_bound_proven(0.01);
-                let is_target_met = far <= 0.01 && fnr <= 0.01 && calls_avoided >= 40.0;
+                let is_target_met = far_ci.sample_size > 0
+                    && fnr_ci.sample_size > 0
+                    && far <= 0.01
+                    && fnr <= 0.01
+                    && calls_avoided >= 40.0;
                 ParetoPoint {
                     threshold: tau,
                     coverage_pct: cov * 100.0,
@@ -352,6 +375,14 @@ impl ThresholdOptimizer {
         }
 
         points
+    }
+}
+
+fn format_rate(rate: f64, denominator: usize) -> String {
+    if denominator > 0 {
+        format!("{:.2}%", rate * 100.0)
+    } else {
+        "N/A (n=0)".to_string()
     }
 }
 
@@ -418,5 +449,36 @@ mod tests {
         let frontier = ThresholdOptimizer::pareto_frontier(&pairs);
         assert!(!frontier.is_empty());
         assert!(frontier.iter().any(|p| p.is_pareto_optimal));
+    }
+
+    #[test]
+    fn unresolved_outcomes_cannot_prove_a_safe_threshold() {
+        let pairs = vec![
+            DecisionOutcomePair::new(0.99, ReflexAction::Accept, Outcome::Unknown),
+            DecisionOutcomePair::new(0.99, ReflexAction::Accept, Outcome::Partial),
+        ];
+
+        let result = ThresholdOptimizer::optimize(&pairs, &OptimizationConstraints::default());
+        assert!(!result.is_feasible);
+        assert!(!result.is_statistically_proven);
+        assert_eq!(result.far_ci.sample_size, 0);
+        assert!(result.explanation.contains("no resolved"));
+        assert_eq!(ThresholdOptimizer::pareto_frontier(&pairs).len(), 0);
+    }
+
+    #[test]
+    fn no_observed_failures_do_not_count_as_a_measured_zero_fnr() {
+        let pairs = vec![
+            DecisionOutcomePair::new(0.99, ReflexAction::Accept, Outcome::Success),
+            DecisionOutcomePair::new(0.90, ReflexAction::Accept, Outcome::Success),
+        ];
+
+        let result = ThresholdOptimizer::optimize(&pairs, &OptimizationConstraints::default());
+        assert!(!result.is_feasible);
+        assert_eq!(result.fnr_ci.sample_size, 0);
+        assert!(result.explanation.contains("observed FNR: N/A (n=0)"));
+        assert!(ThresholdOptimizer::pareto_frontier(&pairs)
+            .iter()
+            .all(|point| !point.is_target_met));
     }
 }

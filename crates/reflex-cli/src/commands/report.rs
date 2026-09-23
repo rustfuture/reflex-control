@@ -1,5 +1,42 @@
+use reflex_core::{Outcome, ReflexAction};
 use reflex_telemetry::TelemetryStore;
 use std::collections::HashMap;
+
+#[derive(Default)]
+struct OutcomeSummary {
+    linked: usize,
+    resolved: usize,
+    success: usize,
+    failure: usize,
+    partial: usize,
+    unknown: usize,
+    false_accepts: usize,
+    resolved_autonomous_passes: usize,
+}
+
+impl OutcomeSummary {
+    fn record(&mut self, action: &ReflexAction, outcome: Option<Outcome>) {
+        let Some(outcome) = outcome else { return };
+        self.linked += 1;
+        match outcome {
+            Outcome::Success => self.success += 1,
+            Outcome::Failure => {
+                self.failure += 1;
+                if action.is_autonomous_pass() {
+                    self.false_accepts += 1;
+                }
+            }
+            Outcome::Partial => self.partial += 1,
+            Outcome::Unknown => self.unknown += 1,
+        }
+        if outcome.is_resolved() {
+            self.resolved += 1;
+            if action.is_autonomous_pass() {
+                self.resolved_autonomous_passes += 1;
+            }
+        }
+    }
+}
 
 pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let store = TelemetryStore::open(&db_path)?;
@@ -14,10 +51,7 @@ pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let total = pairs.len();
     let mut actions_count = HashMap::new();
     let mut providers_count = HashMap::new();
-    let mut verified_count = 0;
-    let mut success_count = 0;
-    let mut failure_count = 0;
-    let mut false_accepts = 0;
+    let mut outcome_summary = OutcomeSummary::default();
     let mut total_latency = 0u64;
     let mut total_cost = 0.0f64;
 
@@ -31,17 +65,7 @@ pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
         total_latency += dec.latency_ms;
         total_cost += dec.cost_estimate;
 
-        if let Some(o) = out {
-            verified_count += 1;
-            if o.result.is_success() {
-                success_count += 1;
-            } else if o.result.is_failure() {
-                failure_count += 1;
-                if dec.action.is_accept() {
-                    false_accepts += 1;
-                }
-            }
-        }
+        outcome_summary.record(&dec.action, out.as_ref().map(|record| record.result));
     }
 
     let avg_latency = total_latency as f64 / total as f64;
@@ -72,17 +96,59 @@ pub fn execute(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n--- Outcome Verification ---");
-    println!("Total Verified:          {verified_count}");
-    if verified_count > 0 {
-        println!("  Success:               {success_count}");
-        println!("  Failure:               {failure_count}");
-        println!("  False Accepts:         {false_accepts}");
-        let far = (false_accepts as f64 / verified_count as f64) * 100.0;
-        println!("  False Accept Rate:     {far:.2}%");
+    println!("Outcome records linked:  {}", outcome_summary.linked);
+    println!("  Resolved (Success/Failure): {}", outcome_summary.resolved);
+    println!("    Success:             {}", outcome_summary.success);
+    println!("    Failure:             {}", outcome_summary.failure);
+    println!("  Partial:               {}", outcome_summary.partial);
+    println!("  Unknown:               {}", outcome_summary.unknown);
+    println!(
+        "  Missing:               {}",
+        total - outcome_summary.linked
+    );
+    if outcome_summary.resolved > 0 {
+        println!("  False Accepts:         {}", outcome_summary.false_accepts);
+        let far = if outcome_summary.resolved_autonomous_passes > 0 {
+            format!(
+                "{:.2}% ({}/{})",
+                outcome_summary.false_accepts as f64
+                    / outcome_summary.resolved_autonomous_passes as f64
+                    * 100.0,
+                outcome_summary.false_accepts,
+                outcome_summary.resolved_autonomous_passes
+            )
+        } else {
+            format!(
+                "N/A (no resolved autonomous passes; false accepts = {})",
+                outcome_summary.false_accepts
+            )
+        };
+        println!("  False Accept Rate:     {far}");
     } else {
-        println!("  No outcomes linked yet. Outcomes are recorded via testing, CI, or verifiers.");
+        println!("  False Accept Rate:     N/A (no resolved outcomes)");
+        println!("  Outcomes are recorded via testing, CI, or verifiers.");
     }
     println!("=================================================================");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn false_accept_rate_cohort_excludes_partial_unknown_and_missing_outcomes() {
+        let mut summary = OutcomeSummary::default();
+        summary.record(&ReflexAction::Accept, Some(Outcome::Failure));
+        summary.record(&ReflexAction::Accept, Some(Outcome::Success));
+        summary.record(&ReflexAction::Accept, Some(Outcome::Partial));
+        summary.record(&ReflexAction::Accept, Some(Outcome::Unknown));
+        summary.record(&ReflexAction::Accept, None);
+
+        assert_eq!(summary.linked, 4);
+        assert_eq!(summary.resolved, 2);
+        assert_eq!(summary.false_accepts, 1);
+        assert_eq!(summary.resolved_autonomous_passes, 2);
+    }
 }

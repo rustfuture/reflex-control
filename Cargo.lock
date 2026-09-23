@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "example-shadow-mode"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "reflex-core",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "example-verifier-gate"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reflex-core",
  "reflex-policy",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-calibration"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reflex-core",
  "reflex-telemetry",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "clap",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-jev"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "reflex-core",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-policy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reflex-core",
  "serde",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-provider"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "rand 0.8.8",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "reflex-telemetry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "reflex-core",

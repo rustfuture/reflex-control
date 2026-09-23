@@ -1,8 +1,10 @@
 # Reflex Control: Empirical 4-Way Comparative Evaluation
 
-> Historical research artifact. This predates the corrected release metric definitions and is preserved for reproducibility only. Its aggregate FAR/FNR/FPR labels must not be used as v0.1 release evidence; see the repository README for current definitions.
+> Historical research artifact. This predates the corrected metric definitions and is retained as a historical reference only. Its aggregate FAR/FNR/FPR labels must not be used as v0.1 release evidence; see the repository README for current definitions.
 
-**Evaluation Dataset**: 100 Fresh Held-Out Tasks (`fixtures/fresh_eval_blind_test.json`)
+**Evaluation Dataset**: 100 curated synthetic tasks (`fixtures/fresh_eval_blind_test.json`; the historical report called these “fresh held-out”)
+
+> The fixture uses repeated task-context templates across partitions and does not include raw run outputs or a complete run manifest. Its historical “held-out” label does not establish an independent blind evaluation.
 
 ### 1. Comparative Performance Matrix
 

@@ -35,6 +35,9 @@ impl ConfidenceInterval {
 
     /// Formats as percentage string with CI: "0.00% [95% CI: 0.00% – 1.82%]"
     pub fn format_pct(&self) -> String {
+        if self.sample_size == 0 {
+            return "N/A (n=0)".to_string();
+        }
         format!(
             "{:.2}% [{:.0}% CI: {:.2}% – {:.2}%]",
             self.point_estimate * 100.0,
@@ -186,6 +189,11 @@ mod tests {
         assert_eq!(ci_large.point_estimate, 0.0);
         assert!(ci_large.upper < 0.01);
         assert!(ci_large.is_upper_bound_proven(0.01)); // Can claim < 1% with N=500!
+    }
+
+    #[test]
+    fn zero_denominator_formats_as_not_available() {
+        assert_eq!(wilson_score_interval(0, 0, 0.95).format_pct(), "N/A (n=0)");
     }
 
     #[test]

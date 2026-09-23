@@ -26,6 +26,9 @@ impl CalibrationCurve {
         let mut success_counts = vec![0usize; buckets_n];
 
         for pair in pairs {
+            if !pair.outcome.is_resolved() {
+                continue;
+            }
             let mut idx = (pair.confidence / step).floor() as usize;
             if idx >= buckets_n {
                 idx = buckets_n - 1;

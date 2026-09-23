@@ -65,6 +65,8 @@ impl AnnotatedDecisionPair {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CalibrationMetrics {
     pub total_samples: usize,
+    pub resolved_samples: usize,
+    pub unresolved_samples: usize,
     pub accuracy: f64,
     pub precision: f64,
     pub recall: f64,
@@ -106,59 +108,90 @@ impl CalibrationMetrics {
         let mut tn = 0;
 
         let mut accepted_count = 0;
+        let mut accepted_resolved_count = 0;
         let mut accepted_correct = 0;
         let mut accepted_failed = 0;
 
-        let mut escalated_count = 0;
+        let mut escalated_resolved_count = 0;
         let mut escalated_would_succeed = 0;
-        let mut cheap_verified_count = 0;
+        let mut cheap_verified_clean_count = 0;
         let mut total_actual_failures = 0;
+        let mut resolved_count = 0;
 
         let mut sample_costs = Vec::with_capacity(pairs.len());
 
         for pair in pairs {
             let p = pair.confidence;
-            let y = if pair.is_success() { 1.0 } else { 0.0 };
-            brier_sum += (p - y).powi(2);
-
             let actual_success = pair.is_success();
-            if !actual_success {
-                total_actual_failures += 1;
+            if pair.outcome.is_resolved() {
+                resolved_count += 1;
+                let y = if actual_success { 1.0 } else { 0.0 };
+                brier_sum += (p - y).powi(2);
+                if !actual_success {
+                    total_actual_failures += 1;
+                }
+
+                let pred_success = p >= default_threshold;
+                if pred_success && actual_success {
+                    tp += 1;
+                } else if pred_success && !actual_success {
+                    fp += 1;
+                } else if !pred_success && actual_success {
+                    fn_cnt += 1;
+                } else {
+                    tn += 1;
+                }
             }
 
-            let pred_success = p >= default_threshold;
-            if pred_success && actual_success {
-                tp += 1;
-            } else if pred_success && !actual_success {
-                fp += 1;
-            } else if !pred_success && actual_success {
-                fn_cnt += 1;
-            } else {
-                tn += 1;
-            }
-
-            let is_accepted = pair.action.is_accept() || p >= default_threshold;
+            // A candidate threshold may promote Accept/Verify predictions to an
+            // autonomous pass. Preserve terminal actions and other policy routes.
+            let is_accepted = pair.action.is_terminate()
+                || ((pair.action.is_accept() || pair.action.is_verify()) && p >= default_threshold);
             if is_accepted {
                 accepted_count += 1;
                 sample_costs.push(0.0001);
-                if actual_success {
-                    accepted_correct += 1;
-                } else {
-                    accepted_failed += 1;
+                if pair.outcome.is_resolved() {
+                    accepted_resolved_count += 1;
+                    if actual_success {
+                        accepted_correct += 1;
+                    } else {
+                        accepted_failed += 1;
+                    }
                 }
-            } else if pair.action.is_verify() || p >= 0.65 {
-                cheap_verified_count += 1;
-                sample_costs.push(0.0001 + 0.005);
+            } else if pair.action.is_verify() || (pair.action.is_accept() && p >= 0.65) {
+                match pair.outcome {
+                    Outcome::Success => {
+                        cheap_verified_clean_count += 1;
+                        sample_costs.push(0.0001 + 0.005);
+                    }
+                    Outcome::Failure => {
+                        escalated_resolved_count += 1;
+                        sample_costs.push(0.0001 + 0.005 + 0.02);
+                    }
+                    Outcome::Partial | Outcome::Unknown => {
+                        // Without a resolved verifier result, assume escalation
+                        // for cost and do not claim a frontier call was avoided.
+                        sample_costs.push(0.0001 + 0.005 + 0.02);
+                    }
+                }
             } else {
-                escalated_count += 1;
                 sample_costs.push(0.0001 + 0.02);
-                if actual_success {
-                    escalated_would_succeed += 1;
+                if pair.outcome.is_resolved() {
+                    escalated_resolved_count += 1;
+                    if actual_success {
+                        escalated_would_succeed += 1;
+                    }
                 }
             }
         }
 
-        let accuracy = (tp + tn) as f64 / n;
+        let resolved_n = resolved_count as f64;
+
+        let accuracy = if resolved_count > 0 {
+            (tp + tn) as f64 / resolved_n
+        } else {
+            0.0
+        };
         let precision = if tp + fp > 0 {
             tp as f64 / (tp + fp) as f64
         } else {
@@ -175,7 +208,11 @@ impl CalibrationMetrics {
             0.0
         };
 
-        let brier_score = brier_sum / n;
+        let brier_score = if resolved_count > 0 {
+            brier_sum / resolved_n
+        } else {
+            0.0
+        };
 
         // Compute ECE with 10 standard equal-width bins
         let num_bins = 10;
@@ -184,6 +221,9 @@ impl CalibrationMetrics {
         let mut bin_correct_sum = vec![0.0f64; num_bins];
 
         for pair in pairs {
+            if !pair.outcome.is_resolved() {
+                continue;
+            }
             let bin_idx = ((pair.confidence * num_bins as f64).floor() as usize).min(num_bins - 1);
             bin_counts[bin_idx] += 1;
             bin_conf_sum[bin_idx] += pair.confidence;
@@ -198,14 +238,14 @@ impl CalibrationMetrics {
             if count > 0 {
                 let bin_conf = bin_conf_sum[i] / count as f64;
                 let bin_acc = bin_correct_sum[i] / count as f64;
-                let bin_weight = count as f64 / n;
+                let bin_weight = count as f64 / resolved_n;
                 ece += bin_weight * (bin_acc - bin_conf).abs();
             }
         }
 
         let coverage = accepted_count as f64 / n;
-        let selective_accuracy = if accepted_count > 0 {
-            accepted_correct as f64 / accepted_count as f64
+        let selective_accuracy = if accepted_resolved_count > 0 {
+            accepted_correct as f64 / accepted_resolved_count as f64
         } else {
             0.0
         };
@@ -213,8 +253,8 @@ impl CalibrationMetrics {
         let false_accepts = accepted_failed;
         let false_negatives = accepted_failed;
 
-        let false_accept_rate = if accepted_count > 0 {
-            false_accepts as f64 / accepted_count as f64
+        let false_accept_rate = if accepted_resolved_count > 0 {
+            false_accepts as f64 / accepted_resolved_count as f64
         } else {
             0.0
         };
@@ -225,8 +265,8 @@ impl CalibrationMetrics {
             0.0
         };
 
-        let false_escalate_rate = if escalated_count > 0 {
-            escalated_would_succeed as f64 / escalated_count as f64
+        let false_escalate_rate = if escalated_resolved_count > 0 {
+            escalated_would_succeed as f64 / escalated_resolved_count as f64
         } else {
             0.0
         };
@@ -236,7 +276,7 @@ impl CalibrationMetrics {
         let all_verifier_calls_avoided_pct = (accepted_count as f64 / n) * 100.0;
 
         // 2. Frontier calls avoided = tasks that did NOT call the expensive frontier model (accepted + cheap verified)
-        let frontier_calls_avoided = accepted_count + cheap_verified_count;
+        let frontier_calls_avoided = accepted_count + cheap_verified_clean_count;
         let frontier_calls_avoided_pct = (frontier_calls_avoided as f64 / n) * 100.0;
 
         // Economic calculation:
@@ -250,7 +290,7 @@ impl CalibrationMetrics {
         };
 
         // Statistical 95% Confidence Intervals
-        let far_ci = wilson_score_interval(false_accepts, accepted_count, 0.95);
+        let far_ci = wilson_score_interval(false_accepts, accepted_resolved_count, 0.95);
         let fnr_ci = wilson_score_interval(false_negatives, total_actual_failures, 0.95);
         let coverage_ci = wilson_score_interval(accepted_count, pairs.len(), 0.95);
         let frontier_calls_avoided_ci =
@@ -265,6 +305,8 @@ impl CalibrationMetrics {
 
         Self {
             total_samples: pairs.len(),
+            resolved_samples: resolved_count,
+            unresolved_samples: pairs.len() - resolved_count,
             accuracy,
             precision,
             recall,
@@ -297,7 +339,13 @@ pub struct SliceMetric {
     pub slice_type: String,
     pub slice_name: String,
     pub sample_count: usize,
+    pub resolved_sample_count: usize,
+    pub unresolved_sample_count: usize,
     pub defect_count: usize,
+    #[serde(default)]
+    pub false_accept_count: usize,
+    #[serde(default)]
+    pub autonomous_pass_count: usize,
     pub brier_score: f64,
     pub ece: f64,
     pub accuracy: f64,
@@ -322,7 +370,11 @@ impl SliceMetric {
             slice_type: slice_type.into(),
             slice_name: slice_name.into(),
             sample_count: m.total_samples,
+            resolved_sample_count: m.resolved_samples,
+            unresolved_sample_count: m.unresolved_samples,
             defect_count: m.total_actual_failures,
+            false_accept_count: m.false_accepts,
+            autonomous_pass_count: m.far_ci.sample_size,
             brier_score: m.brier_score,
             ece: m.ece,
             accuracy: m.accuracy,
@@ -425,6 +477,43 @@ mod tests {
         assert!(metrics.far_ci.lower <= metrics.far_ci.point_estimate);
         assert!(metrics.far_ci.point_estimate <= metrics.far_ci.upper);
         assert!(metrics.coverage_ci.sample_size == 5);
+    }
+
+    #[test]
+    fn unresolved_outcomes_are_reported_but_excluded_from_risk_and_calibration_metrics() {
+        let pairs = vec![
+            DecisionOutcomePair::new(0.90, ReflexAction::Accept, Outcome::Success),
+            DecisionOutcomePair::new(0.90, ReflexAction::Accept, Outcome::Failure),
+            DecisionOutcomePair::new(0.10, ReflexAction::Accept, Outcome::Unknown),
+            DecisionOutcomePair::new(0.10, ReflexAction::Accept, Outcome::Partial),
+        ];
+
+        let metrics = CalibrationMetrics::compute(&pairs, 0.80);
+        assert_eq!(metrics.total_samples, 4);
+        assert_eq!(metrics.resolved_samples, 2);
+        assert_eq!(metrics.unresolved_samples, 2);
+        assert_eq!(metrics.total_actual_failures, 1);
+        assert_eq!(metrics.false_accepts, 1);
+        assert!((metrics.false_accept_rate - 0.5).abs() < f64::EPSILON);
+        assert!((metrics.brier_score - 0.41).abs() < 1e-12);
+        assert_eq!(metrics.far_ci.sample_size, 2);
+    }
+
+    #[test]
+    fn threshold_far_and_frontier_avoidance_use_their_defined_action_cohorts() {
+        let pairs = vec![
+            DecisionOutcomePair::new(0.20, ReflexAction::Terminate, Outcome::Failure),
+            DecisionOutcomePair::new(0.99, ReflexAction::Retry, Outcome::Success),
+            DecisionOutcomePair::new(0.70, ReflexAction::Verify, Outcome::Failure),
+            DecisionOutcomePair::new(0.70, ReflexAction::Verify, Outcome::Success),
+            DecisionOutcomePair::new(0.70, ReflexAction::Verify, Outcome::Unknown),
+        ];
+
+        let metrics = CalibrationMetrics::compute(&pairs, 0.90);
+        assert_eq!(metrics.far_ci.sample_size, 1);
+        assert_eq!(metrics.false_accepts, 1);
+        assert_eq!(metrics.frontier_calls_avoided, 2);
+        assert_eq!(metrics.frontier_calls_avoided_ci.sample_size, 5);
     }
 
     #[test]

@@ -95,12 +95,12 @@ pub struct SplitEvaluationReport {
     pub test_samples: usize,
     pub train_val_optimization: OptimizationResult,
     pub frozen_threshold: f64,
-    pub held_out_test_metrics: CalibrationMetrics,
+    pub test_metrics: CalibrationMetrics,
 }
 
 impl DatasetSplit<DecisionOutcomePair> {
     /// Selects the optimal threshold exclusively on Train + Validation,
-    /// and then evaluates the frozen threshold on the Held-Out Test set.
+    /// and then evaluates the frozen threshold on the test partition.
     pub fn evaluate_frozen_pipeline(
         &self,
         constraints: &OptimizationConstraints,
@@ -112,8 +112,8 @@ impl DatasetSplit<DecisionOutcomePair> {
         let opt_res = ThresholdOptimizer::optimize(&train_val, constraints);
         let frozen_threshold = opt_res.recommended_threshold;
 
-        // Step 2: Evaluate frozen threshold on held-out test set
-        let held_out_metrics = CalibrationMetrics::compute(&self.test, frozen_threshold);
+        // Step 2: Evaluate the frozen threshold on the test partition.
+        let test_metrics = CalibrationMetrics::compute(&self.test, frozen_threshold);
 
         SplitEvaluationReport {
             train_samples: self.train.len(),
@@ -121,11 +121,11 @@ impl DatasetSplit<DecisionOutcomePair> {
             test_samples: self.test.len(),
             train_val_optimization: opt_res,
             frozen_threshold,
-            held_out_test_metrics: held_out_metrics,
+            test_metrics,
         }
     }
 
-    /// Evaluates a pre-selected frozen threshold directly on the Held-Out Test set.
+    /// Evaluates a pre-selected frozen threshold directly on the test partition.
     pub fn evaluate_test_with_frozen_threshold(&self, frozen_threshold: f64) -> CalibrationMetrics {
         CalibrationMetrics::compute(&self.test, frozen_threshold)
     }
@@ -179,7 +179,7 @@ mod tests {
             ));
         }
 
-        let split = split_stratified(items, 0.50, 0.25, 0.25, |p| !p.is_success(), 42);
+        let split = split_stratified(items, 0.50, 0.25, 0.25, |p| p.outcome.is_failure(), 42);
 
         assert_eq!(split.total_samples(), 120);
         assert!(!split.train.is_empty());
@@ -187,7 +187,7 @@ mod tests {
         assert!(!split.test.is_empty());
 
         // Defect ratio should be preserved across all splits
-        let test_defects = split.test.iter().filter(|p| !p.is_success()).count();
+        let test_defects = split.test.iter().filter(|p| p.outcome.is_failure()).count();
         assert!((4..=6).contains(&test_defects));
     }
 
@@ -209,13 +209,13 @@ mod tests {
             ));
         }
 
-        let split = split_stratified(items, 0.50, 0.25, 0.25, |p| !p.is_success(), 42);
+        let split = split_stratified(items, 0.50, 0.25, 0.25, |p| p.outcome.is_failure(), 42);
 
         let constraints = OptimizationConstraints::default();
         let report = split.evaluate_frozen_pipeline(&constraints);
 
         assert!(report.frozen_threshold > 0.0);
         assert_eq!(report.test_samples, split.test.len());
-        assert!(report.held_out_test_metrics.total_samples > 0);
+        assert!(report.test_metrics.total_samples > 0);
     }
 }

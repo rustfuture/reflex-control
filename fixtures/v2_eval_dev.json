@@ -8,7 +8,7 @@
   "tasks": [
     {
       "task_id": "v2-task-1001",
-      "timestamp": "2026-09-29T11:47:00Z",
+      "timestamp": "2026-09-18T11:47:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "low",
@@ -32,7 +32,7 @@
     },
     {
       "task_id": "v2-task-1002",
-      "timestamp": "2026-09-30T12:54:00Z",
+      "timestamp": "2026-09-19T12:54:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "high",
@@ -56,7 +56,7 @@
     },
     {
       "task_id": "v2-task-1003",
-      "timestamp": "2026-09-31T13:01:00Z",
+      "timestamp": "2026-09-20T13:01:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "low",
@@ -80,7 +80,7 @@
     },
     {
       "task_id": "v2-task-1004",
-      "timestamp": "2026-09-32T14:08:00Z",
+      "timestamp": "2026-09-21T14:08:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "low",
@@ -200,7 +200,7 @@
     },
     {
       "task_id": "v2-task-1009",
-      "timestamp": "2026-09-22T19:43:00Z",
+      "timestamp": "2026-09-18T19:43:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "medium",
@@ -224,7 +224,7 @@
     },
     {
       "task_id": "v2-task-1010",
-      "timestamp": "2026-09-23T10:50:00Z",
+      "timestamp": "2026-09-19T10:50:00Z",
       "split": "DEV",
       "category": "data_pipeline",
       "risk_level": "low",
@@ -248,7 +248,7 @@
     },
     {
       "task_id": "v2-task-1011",
-      "timestamp": "2026-09-24T11:57:00Z",
+      "timestamp": "2026-09-20T11:57:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "medium",
@@ -272,7 +272,7 @@
     },
     {
       "task_id": "v2-task-1012",
-      "timestamp": "2026-09-25T12:04:00Z",
+      "timestamp": "2026-09-21T12:04:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "low",
@@ -296,7 +296,7 @@
     },
     {
       "task_id": "v2-task-1013",
-      "timestamp": "2026-09-26T13:11:00Z",
+      "timestamp": "2026-09-18T13:11:00Z",
       "split": "DEV",
       "category": "data_pipeline",
       "risk_level": "low",
@@ -320,7 +320,7 @@
     },
     {
       "task_id": "v2-task-1014",
-      "timestamp": "2026-09-27T14:18:00Z",
+      "timestamp": "2026-09-19T14:18:00Z",
       "split": "DEV",
       "category": "database_sql",
       "risk_level": "medium",
@@ -344,7 +344,7 @@
     },
     {
       "task_id": "v2-task-1015",
-      "timestamp": "2026-09-28T15:25:00Z",
+      "timestamp": "2026-09-20T15:25:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "high",
@@ -368,7 +368,7 @@
     },
     {
       "task_id": "v2-task-1016",
-      "timestamp": "2026-09-29T16:32:00Z",
+      "timestamp": "2026-09-21T16:32:00Z",
       "split": "DEV",
       "category": "data_pipeline",
       "risk_level": "low",
@@ -392,7 +392,7 @@
     },
     {
       "task_id": "v2-task-1017",
-      "timestamp": "2026-09-30T17:39:00Z",
+      "timestamp": "2026-09-18T17:39:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "medium",
@@ -416,7 +416,7 @@
     },
     {
       "task_id": "v2-task-1018",
-      "timestamp": "2026-09-31T18:46:00Z",
+      "timestamp": "2026-09-19T18:46:00Z",
       "split": "DEV",
       "category": "auth_security",
       "risk_level": "critical",
@@ -440,7 +440,7 @@
     },
     {
       "task_id": "v2-task-1019",
-      "timestamp": "2026-09-32T19:53:00Z",
+      "timestamp": "2026-09-20T19:53:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "low",
@@ -464,7 +464,7 @@
     },
     {
       "task_id": "v2-task-1020",
-      "timestamp": "2026-09-18T10:00:00Z",
+      "timestamp": "2026-09-21T10:00:00Z",
       "split": "DEV",
       "category": "frontend_ui",
       "risk_level": "low",
@@ -488,7 +488,7 @@
     },
     {
       "task_id": "v2-task-1021",
-      "timestamp": "2026-09-19T11:07:00Z",
+      "timestamp": "2026-09-18T11:07:00Z",
       "split": "DEV",
       "category": "auth_security",
       "risk_level": "critical",
@@ -512,7 +512,7 @@
     },
     {
       "task_id": "v2-task-1022",
-      "timestamp": "2026-09-20T12:14:00Z",
+      "timestamp": "2026-09-19T12:14:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "low",
@@ -536,7 +536,7 @@
     },
     {
       "task_id": "v2-task-1023",
-      "timestamp": "2026-09-21T13:21:00Z",
+      "timestamp": "2026-09-20T13:21:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "medium",
@@ -560,7 +560,7 @@
     },
     {
       "task_id": "v2-task-1024",
-      "timestamp": "2026-09-22T14:28:00Z",
+      "timestamp": "2026-09-21T14:28:00Z",
       "split": "DEV",
       "category": "api_backend",
       "risk_level": "high",
@@ -584,7 +584,7 @@
     },
     {
       "task_id": "v2-task-1025",
-      "timestamp": "2026-09-23T15:35:00Z",
+      "timestamp": "2026-09-18T15:35:00Z",
       "split": "DEV",
       "category": "frontend_ui",
       "risk_level": "low",
@@ -608,7 +608,7 @@
     },
     {
       "task_id": "v2-task-1026",
-      "timestamp": "2026-09-24T16:42:00Z",
+      "timestamp": "2026-09-19T16:42:00Z",
       "split": "DEV",
       "category": "auth_security",
       "risk_level": "critical",
@@ -632,7 +632,7 @@
     },
     {
       "task_id": "v2-task-1027",
-      "timestamp": "2026-09-25T17:49:00Z",
+      "timestamp": "2026-09-20T17:49:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "medium",
@@ -656,7 +656,7 @@
     },
     {
       "task_id": "v2-task-1028",
-      "timestamp": "2026-09-26T18:56:00Z",
+      "timestamp": "2026-09-21T18:56:00Z",
       "split": "DEV",
       "category": "frontend_ui",
       "risk_level": "low",
@@ -680,7 +680,7 @@
     },
     {
       "task_id": "v2-task-1029",
-      "timestamp": "2026-09-27T19:03:00Z",
+      "timestamp": "2026-09-18T19:03:00Z",
       "split": "DEV",
       "category": "devops_infra",
       "risk_level": "medium",
@@ -704,7 +704,7 @@
     },
     {
       "task_id": "v2-task-1030",
-      "timestamp": "2026-09-28T10:10:00Z",
+      "timestamp": "2026-09-19T10:10:00Z",
       "split": "DEV",
       "category": "frontend_ui",
       "risk_level": "low",

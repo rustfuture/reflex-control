@@ -8,6 +8,22 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+fn format_resolved_metric(value: f64, resolved_samples: usize) -> String {
+    if resolved_samples == 0 {
+        "N/A (n=0)".to_string()
+    } else {
+        format!("{value:.4}")
+    }
+}
+
+fn format_resolved_percent(value: f64, resolved_samples: usize) -> String {
+    if resolved_samples == 0 {
+        "N/A (n=0)".to_string()
+    } else {
+        format!("{:.2}%", value * 100.0)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct DatasetMetadata {
@@ -162,12 +178,20 @@ pub fn execute(
     println!("Evaluation Dataset:             {dataset_file_name}");
     println!("Provenance Classification:      {dataset_provenance}");
     println!("Total Samples in Dataset:       {}", pairs.len());
-    let total_defects = pairs.iter().filter(|p| !p.is_success()).count();
-    println!(
-        "Observed Defect / Positive:     {} ({:.2}%)",
-        total_defects,
-        (total_defects as f64 / pairs.len() as f64) * 100.0
-    );
+    let resolved_samples = pairs.iter().filter(|p| p.outcome.is_resolved()).count();
+    let unresolved_samples = pairs.len() - resolved_samples;
+    let total_defects = pairs.iter().filter(|p| p.outcome.is_failure()).count();
+    println!("Resolved Outcomes:              {resolved_samples}");
+    println!("Unresolved Excluded from Rates: {unresolved_samples}");
+    if resolved_samples > 0 {
+        println!(
+            "Observed Defects (resolved):   {} ({:.2}%)",
+            total_defects,
+            (total_defects as f64 / resolved_samples as f64) * 100.0
+        );
+    } else {
+        println!("Observed Defects (resolved):   N/A (no resolved outcomes)");
+    }
 
     let constraints = OptimizationConstraints {
         current_threshold,
@@ -177,34 +201,56 @@ pub fn execute(
     };
 
     if split_evaluation && annotated_pairs.len() >= 40 {
-        // Deterministic stratified 3-way split: 50% Train, 25% Validation, 25% Held-Out Test
+        // Deterministic stratified 3-way partition: 50% Train, 25% Validation, 25% Test.
         let split = split_stratified(
             annotated_pairs.clone(),
             0.50,
             0.25,
             0.25,
-            |p: &AnnotatedDecisionPair| p.outcome.is_success(),
+            |p: &AnnotatedDecisionPair| p.outcome.is_failure(),
             42,
         );
-        let train_defects = split.train.iter().filter(|p| !p.is_success()).count();
-        let val_defects = split.val.iter().filter(|p| !p.is_success()).count();
-        let test_defects = split.test.iter().filter(|p| !p.is_success()).count();
+        let train_defects = split
+            .train
+            .iter()
+            .filter(|p| p.outcome.is_failure())
+            .count();
+        let val_defects = split.val.iter().filter(|p| p.outcome.is_failure()).count();
+        let test_defects = split.test.iter().filter(|p| p.outcome.is_failure()).count();
+        let train_unresolved = split
+            .train
+            .iter()
+            .filter(|p| !p.outcome.is_resolved())
+            .count();
+        let val_unresolved = split
+            .val
+            .iter()
+            .filter(|p| !p.outcome.is_resolved())
+            .count();
+        let test_unresolved = split
+            .test
+            .iter()
+            .filter(|p| !p.outcome.is_resolved())
+            .count();
 
         println!("\n--- Dataset Partitioning (Deterministic Stratified 3-Way Split) ---");
         println!(
-            "  1. Calibration / Train (50%): {:>5} samples (defects: {:>4})",
+            "  1. Calibration / Train (50%): {:>5} samples (resolved defects: {:>4}, unresolved: {:>4})",
             split.train.len(),
-            train_defects
+            train_defects,
+            train_unresolved
         );
         println!(
-            "  2. Validation Set       (25%): {:>5} samples (defects: {:>4})",
+            "  2. Validation Partition (25%): {:>5} samples (resolved defects: {:>4}, unresolved: {:>4})",
             split.val.len(),
-            val_defects
+            val_defects,
+            val_unresolved
         );
         println!(
-            "  3. Held-Out Test Set    (25%): {:>5} samples (defects: {:>4}) [FROZEN EVALUATION]",
+            "  3. Test Partition       (25%): {:>5} samples (resolved defects: {:>4}, unresolved: {:>4})",
             split.test.len(),
-            test_defects
+            test_defects,
+            test_unresolved
         );
 
         // Optimize threshold ONLY on Train + Validation
@@ -243,25 +289,36 @@ pub fn execute(
         );
         println!("  Optimization Detail:          {}", opt.explanation);
 
-        // Evaluate the FROZEN threshold on the HELD-OUT TEST SET
+        // Evaluate the selected threshold on the separate test partition.
         let test_metrics = split.evaluate_test_with_frozen_threshold(frozen_tau);
 
         println!(
-            "\n--- Phase 2: Held-Out Test Set Performance (Frozen Threshold tau* = {frozen_tau:.3}) ---"
+            "\n--- Phase 2: Test Partition Performance (Selected Threshold tau* = {frozen_tau:.3}) ---"
         );
         println!(
-            "  Held-Out Test Sample Size:    {}",
+            "  Test Partition Sample Size:   {}",
             test_metrics.total_samples
         );
         println!(
-            "  Accuracy:                     {:.2}%",
-            test_metrics.accuracy * 100.0
+            "  Resolved Outcomes:             {}",
+            test_metrics.resolved_samples
         );
         println!(
-            "  Brier Score:                  {:.4}  (lower is better, 0 = perfect)",
-            test_metrics.brier_score
+            "  Unresolved Excluded:           {}",
+            test_metrics.unresolved_samples
         );
-        println!("  Expected Calib. Error (ECE):  {:.4}", test_metrics.ece);
+        println!(
+            "  Accuracy:                     {}",
+            format_resolved_percent(test_metrics.accuracy, test_metrics.resolved_samples)
+        );
+        println!(
+            "  Brier Score:                  {}  (lower is better, 0 = perfect)",
+            format_resolved_metric(test_metrics.brier_score, test_metrics.resolved_samples)
+        );
+        println!(
+            "  Expected Calib. Error (ECE):  {}",
+            format_resolved_metric(test_metrics.ece, test_metrics.resolved_samples)
+        );
         println!();
         println!(
             "  Autonomous Coverage:          {}",
@@ -296,8 +353,8 @@ pub fn execute(
             println!("  [PROVEN] False Accept Rate (FAR) is STATISTICALLY PROVEN < {:.2}% at 95% confidence (upper bound: {:.2}%).",
                 max_false_accept * 100.0, test_metrics.far_ci.upper * 100.0);
         } else {
-            println!("  [EARLY SIGNAL ONLY] Observed FAR is {:.2}%, but 95% upper bound is {:.2}% >= {:.2}%. Sample size on test slice is insufficient to mathematically guarantee <{:.2}%.",
-                test_metrics.false_accept_rate * 100.0, test_metrics.far_ci.upper * 100.0, max_false_accept * 100.0, max_false_accept * 100.0);
+            println!("  [EARLY SIGNAL ONLY] Observed FAR is {}; 95% upper bound is {:.2}% against the {:.2}% target. The sample does not prove the target.",
+                test_metrics.far_ci.format_pct(), test_metrics.far_ci.upper * 100.0, max_false_accept * 100.0);
         }
 
         if test_metrics
@@ -307,14 +364,14 @@ pub fn execute(
             println!("  [PROVEN] False Negative Rate (FNR) is STATISTICALLY PROVEN < {:.2}% at 95% confidence (upper bound: {:.2}%).",
                 max_false_negative * 100.0, test_metrics.fnr_ci.upper * 100.0);
         } else {
-            println!("  [EARLY SIGNAL ONLY] Observed FNR is {:.2}%, but 95% upper bound is {:.2}% >= {:.2}%. Requires larger defect sample to formally guarantee <{:.2}%.",
-                test_metrics.false_negative_rate * 100.0, test_metrics.fnr_ci.upper * 100.0, max_false_negative * 100.0, max_false_negative * 100.0);
+            println!("  [EARLY SIGNAL ONLY] Observed FNR is {}; 95% upper bound is {:.2}% against the {:.2}% target. The resolved defect sample does not prove the target.",
+                test_metrics.fnr_ci.format_pct(), test_metrics.fnr_ci.upper * 100.0, max_false_negative * 100.0);
         }
 
         // Calibration Curve on Test Set
         let test_pairs: Vec<DecisionOutcomePair> = split.test.iter().map(|a| a.to_pair()).collect();
         let curve = CalibrationCurve::build(&test_pairs, 5);
-        println!("\n--- Calibration View on Held-Out Test (Confidence Buckets vs Observed) ---");
+        println!("\n--- Calibration View on Test Partition (Resolved Outcomes Only) ---");
         println!("Bucket Range   Count   Mean Conf   Observed Success   Calib Gap");
         println!("─────────────────────────────────────────────────────────────────");
         for b in &curve.buckets {
@@ -331,48 +388,57 @@ pub fn execute(
 
         // Disaggregated Metrics across Slices
         let slice_metrics = compute_disaggregated_metrics(&split.test, frozen_tau);
-        println!("\n--- Disaggregated Evaluation on Held-Out Test (By Slice & Category) ---");
+        println!("\n--- Disaggregated Evaluation on Test Partition (By Slice & Category) ---");
         println!(
-            "{:<16} | {:<16} | {:>5} | {:>6} | {:>7} | {:>6} | {:>8} | {:>7} | {:>7}",
+            "{:<16} | {:<16} | {:>7} | {:>8} | {:>10} | {:>7} | {:>11} | {:>7} | {:>6} | {:>8} | {:>20} | {:>20}",
             "Slice Type",
             "Subcategory",
-            "Count",
-            "Defect",
+            "Samples",
+            "Resolved",
+            "Unresolved",
+            "Defects",
+            "FA / Pass",
             "Brier",
             "ECE",
             "Coverage",
             "FAR",
             "FNR"
         );
-        println!("─────────────────────────────────────────────────────────────────────────────────────────────────");
+        println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
         // Decision Types
         for s in slice_metrics
             .iter()
             .filter(|s| s.slice_type == "decision_type")
         {
-            println!("{:<16} | {:<16} | {:>5} | {:>6} | {:>7.4} | {:>6.4} | {:>7.1}% | {:>6.2}% | {:>6.2}%",
-                "Decision Type", s.slice_name, s.sample_count, s.defect_count, s.brier_score, s.ece,
-                s.coverage_pct, s.false_accept_rate * 100.0, s.false_negative_rate * 100.0);
+            println!("{:<16} | {:<16} | {:>7} | {:>8} | {:>10} | {:>7} | {:>11} | {:>7} | {:>6} | {:>7} | {:>20} | {:>20}",
+                "Decision Type", s.slice_name, s.sample_count, s.resolved_sample_count, s.unresolved_sample_count,
+                s.defect_count, format!("{}/{}", s.false_accept_count, s.autonomous_pass_count),
+                format_resolved_metric(s.brier_score, s.resolved_sample_count), format_resolved_metric(s.ece, s.resolved_sample_count),
+                s.coverage_pct, s.far_ci.format_pct(), s.fnr_ci.format_pct());
         }
-        println!("─────────────────────────────────────────────────────────────────────────────────────────────────");
+        println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
         // Risk Levels
         for s in slice_metrics
             .iter()
             .filter(|s| s.slice_type == "risk_level")
         {
-            println!("{:<16} | {:<16} | {:>5} | {:>6} | {:>7.4} | {:>6.4} | {:>7.1}% | {:>6.2}% | {:>6.2}%",
-                "Risk Level", s.slice_name, s.sample_count, s.defect_count, s.brier_score, s.ece,
-                s.coverage_pct, s.false_accept_rate * 100.0, s.false_negative_rate * 100.0);
+            println!("{:<16} | {:<16} | {:>7} | {:>8} | {:>10} | {:>7} | {:>11} | {:>7} | {:>6} | {:>7} | {:>20} | {:>20}",
+                "Risk Level", s.slice_name, s.sample_count, s.resolved_sample_count, s.unresolved_sample_count,
+                s.defect_count, format!("{}/{}", s.false_accept_count, s.autonomous_pass_count),
+                format_resolved_metric(s.brier_score, s.resolved_sample_count), format_resolved_metric(s.ece, s.resolved_sample_count),
+                s.coverage_pct, s.far_ci.format_pct(), s.fnr_ci.format_pct());
         }
-        println!("─────────────────────────────────────────────────────────────────────────────────────────────────");
+        println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 
         // Task Categories
         for s in slice_metrics.iter().filter(|s| s.slice_type == "category") {
-            println!("{:<16} | {:<16} | {:>5} | {:>6} | {:>7.4} | {:>6.4} | {:>7.1}% | {:>6.2}% | {:>6.2}%",
-                "Category", s.slice_name, s.sample_count, s.defect_count, s.brier_score, s.ece,
-                s.coverage_pct, s.false_accept_rate * 100.0, s.false_negative_rate * 100.0);
+            println!("{:<16} | {:<16} | {:>7} | {:>8} | {:>10} | {:>7} | {:>11} | {:>7} | {:>6} | {:>7} | {:>20} | {:>20}",
+                "Category", s.slice_name, s.sample_count, s.resolved_sample_count, s.unresolved_sample_count,
+                s.defect_count, format!("{}/{}", s.false_accept_count, s.autonomous_pass_count),
+                format_resolved_metric(s.brier_score, s.resolved_sample_count), format_resolved_metric(s.ece, s.resolved_sample_count),
+                s.coverage_pct, s.far_ci.format_pct(), s.fnr_ci.format_pct());
         }
         println!("=================================================================================================\n");
     } else {
@@ -385,11 +451,17 @@ pub fn execute(
             metrics.total_samples
         );
         println!(
-            "Accuracy:                       {:.2}%",
-            metrics.accuracy * 100.0
+            "Accuracy:                       {}",
+            format_resolved_percent(metrics.accuracy, metrics.resolved_samples)
         );
-        println!("Brier Score:                    {:.4}", metrics.brier_score);
-        println!("Expected Calib. Error (ECE):    {:.4}", metrics.ece);
+        println!(
+            "Brier Score:                    {}",
+            format_resolved_metric(metrics.brier_score, metrics.resolved_samples)
+        );
+        println!(
+            "Expected Calib. Error (ECE):    {}",
+            format_resolved_metric(metrics.ece, metrics.resolved_samples)
+        );
         println!(
             "Automation Coverage:            {}",
             metrics.coverage_ci.format_pct()

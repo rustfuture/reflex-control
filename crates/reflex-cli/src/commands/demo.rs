@@ -127,9 +127,9 @@ pub async fn execute_verifier_gate(db_path: String) -> Result<(), Box<dyn std::e
     }
 
     let false_accept_rate = if auto_accepted > 0 {
-        (false_accepts as f64 / auto_accepted as f64) * 100.0
+        Some((false_accepts as f64 / auto_accepted as f64) * 100.0)
     } else {
-        0.0
+        None
     };
     let cost_reduction = ((baseline_cost - reflex_total_cost) / baseline_cost) * 100.0;
 
@@ -140,13 +140,17 @@ pub async fn execute_verifier_gate(db_path: String) -> Result<(), Box<dyn std::e
     println!("Frontier verified:      {frontier_verified:>5}");
     println!();
     println!("False accepts:          {false_accepts:>5}");
-    println!("False accept rate:       {false_accept_rate:>5.2}%");
+    if let Some(rate) = false_accept_rate {
+        println!("False accept rate:       {rate:>5.2}%");
+    } else {
+        println!("False accept rate:       N/A (zero autonomous accepts)");
+    }
     println!();
     println!("Baseline cost:          ${baseline_cost:>5.2}");
     println!("Reflex cost:             ${reflex_total_cost:>5.2}");
     println!();
     println!("Cost reduction:          {cost_reduction:>5.1}%");
-    println!("Median latency:          -41%");
+    println!("Latency comparison:      not measured in this synthetic demo");
 
     Ok(())
 }

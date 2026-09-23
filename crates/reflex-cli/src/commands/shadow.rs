@@ -269,6 +269,13 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut reflex_total_latency = 0u64;
     let orchestrator_latency_avg_ms = 1850;
 
+    let mut resolved_outcomes = 0usize;
+    let mut partial_outcomes = 0usize;
+    let mut unknown_outcomes = 0usize;
+    let mut missing_outcomes = 0usize;
+    let mut reflex_accepted_resolved = 0usize;
+    let mut reflex_verified_unresolved = 0usize;
+    let mut frontier_status_known = 0usize;
     let mut actual_defects = 0usize;
     let mut false_accepts = 0usize;
 
@@ -280,30 +287,48 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
             agreements += 1;
         }
 
-        let is_success = r.final_outcome.map(|o| o.is_success()).unwrap_or(true);
-        if !is_success {
-            actual_defects += 1;
+        match r.final_outcome {
+            Some(outcome @ (reflex_core::Outcome::Success | reflex_core::Outcome::Failure)) => {
+                resolved_outcomes += 1;
+                if outcome.is_failure() {
+                    actual_defects += 1;
+                    if r.predicted_action.is_autonomous_pass() {
+                        false_accepts += 1;
+                    }
+                }
+            }
+            Some(reflex_core::Outcome::Partial) => partial_outcomes += 1,
+            Some(reflex_core::Outcome::Unknown) => unknown_outcomes += 1,
+            None => missing_outcomes += 1,
         }
 
         match r.predicted_action {
-            reflex_core::ReflexAction::Accept => {
+            reflex_core::ReflexAction::Accept | reflex_core::ReflexAction::Terminate => {
                 reflex_accepted += 1;
                 reflex_total_cost += 0.0001; // System-1 reflex cost
-                if !is_success {
-                    false_accepts += 1;
+                frontier_status_known += 1;
+                if r.final_outcome.is_some_and(|o| o.is_resolved()) {
+                    reflex_accepted_resolved += 1;
                 }
             }
-            reflex_core::ReflexAction::Verify => {
-                if is_success {
+            reflex_core::ReflexAction::Verify => match r.final_outcome {
+                Some(reflex_core::Outcome::Success) => {
                     reflex_verified_clean += 1;
-                    reflex_total_cost += 0.0001 + 0.005; // Cheap verifier verified clean
-                } else {
-                    reflex_verified_defect += 1;
-                    reflex_total_cost += 0.0001 + 0.005 + 0.02; // Cheap verifier caught defect -> escalated to frontier
+                    frontier_status_known += 1;
+                    reflex_total_cost += 0.0001 + 0.005;
                 }
-            }
+                Some(reflex_core::Outcome::Failure) => {
+                    reflex_verified_defect += 1;
+                    frontier_status_known += 1;
+                    reflex_total_cost += 0.0001 + 0.005 + 0.02;
+                }
+                Some(reflex_core::Outcome::Partial | reflex_core::Outcome::Unknown) | None => {
+                    reflex_verified_unresolved += 1;
+                }
+            },
             _ => {
                 reflex_escalated += 1;
+                frontier_status_known += 1;
                 reflex_total_cost += 0.0001 + 0.02; // System-1 + frontier verifier
             }
         }
@@ -327,7 +352,8 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     let metrics = CalibrationMetrics::compute(&pairs, default_threshold);
     let curve = CalibrationCurve::build(&pairs, 5);
 
-    let orchestrator_total_cost = total as f64 * orchestrator_cost_per_call;
+    let known_cost_tasks = total.saturating_sub(reflex_verified_unresolved);
+    let orchestrator_total_cost = known_cost_tasks as f64 * orchestrator_cost_per_call;
     let reflex_avg_latency = reflex_total_latency as f64 / total as f64;
     let cost_savings =
         ((orchestrator_total_cost - reflex_total_cost) / orchestrator_total_cost) * 100.0;
@@ -339,13 +365,18 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     // Avoided frontier calls = tasks autonomously accepted + tasks cheap verified clean without escalation.
     // Tasks that are directly escalated OR cheap verified with defect escalate to the frontier model.
     let frontier_calls_avoided = reflex_accepted + reflex_verified_clean;
-    let frontier_avoided_ci = wilson_score_interval(frontier_calls_avoided, total, 0.95);
+    let frontier_avoided_ci =
+        wilson_score_interval(frontier_calls_avoided, frontier_status_known, 0.95);
     let coverage_ci = wilson_score_interval(reflex_accepted, total, 0.95);
-    let far_ci = wilson_score_interval(false_accepts, reflex_accepted, 0.95);
+    let far_ci = wilson_score_interval(false_accepts, reflex_accepted_resolved, 0.95);
     let fnr_ci = wilson_score_interval(false_accepts, actual_defects, 0.95);
 
     println!("================= Reflex Shadow Mode Verification Report =================");
     println!("Evaluated Shadow Tasks:     {total}");
+    println!("Resolved Outcomes:          {resolved_outcomes}");
+    println!(
+        "Partial / Unknown / Missing: {partial_outcomes} / {unknown_outcomes} / {missing_outcomes}"
+    );
     println!("Telemetry Store:            {db_path}");
     println!("Data Nature:                Shadow Pipeline Telemetry (Fixture / Agent Runs)");
     println!(
@@ -356,7 +387,7 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("--- Decision Breakdown ---");
     println!(
-        "  Autonomous Accepted:      {:>5} ({:5.1}%)",
+        "  Autonomous Passes (all):  {:>5} ({:5.1}%)",
         reflex_accepted,
         (reflex_accepted as f64 / total as f64) * 100.0
     );
@@ -378,14 +409,20 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("--- Verification & Reliability Metrics (95% Confidence Intervals) ---");
     println!("  Total Ground Truth Defects: {actual_defects}");
-    println!("  False Accepts (Accepted Defect): {false_accepts}");
+    println!("  Unresolved Verified Actions: {reflex_verified_unresolved}");
+    println!("  FAR Numerator / Denominator: {false_accepts} / {reflex_accepted_resolved}");
     println!("  Observed False Accept Rate: {}", far_ci.format_pct());
     println!("  Observed False Negative Rate: {}", fnr_ci.format_pct());
-    println!(
-        "  Brier Score:                {:.4}  (lower is better)",
-        metrics.brier_score
-    );
-    println!("  Expected Calib. Error (ECE): {:.4}", metrics.ece);
+    if metrics.resolved_samples > 0 {
+        println!(
+            "  Brier Score:                {:.4}  (lower is better)",
+            metrics.brier_score
+        );
+        println!("  Expected Calib. Error (ECE): {:.4}", metrics.ece);
+    } else {
+        println!("  Brier Score:                N/A (n=0)");
+        println!("  Expected Calib. Error (ECE): N/A (n=0)");
+    }
     println!("  Automation Coverage:        {}", coverage_ci.format_pct());
     println!(
         "  Frontier Calls Avoided:     {}",
@@ -397,9 +434,13 @@ pub fn report(db_path: String) -> Result<(), Box<dyn std::error::Error>> {
     );
     println!();
     println!("--- Economic & Latency Impact ---");
-    println!("  Baseline Cost (All Frontier): ${orchestrator_total_cost:.4}");
+    println!("  Baseline Cost (Resolved Cohort): ${orchestrator_total_cost:.4}");
     println!("  Reflex Control System-1 Cost: ${reflex_total_cost:.4}");
-    println!("  Cost Reduction:              {cost_savings:5.1}%");
+    if known_cost_tasks > 0 {
+        println!("  Cost Reduction:              {cost_savings:5.1}% (resolved cost cohort n={known_cost_tasks})");
+    } else {
+        println!("  Cost Reduction:              N/A (no resolved cost cohort)");
+    }
     println!(
         "  Median/Avg Latency Reduction: {latency_reduction:5.1}% ({orchestrator_latency_avg_ms}ms -> {reflex_avg_latency:.1}ms)"
     );

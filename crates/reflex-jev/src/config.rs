@@ -1,16 +1,30 @@
+use std::fmt;
 use std::time::Duration;
 
 pub const OFFICIAL_JEV_SYSTEMONE_ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 pub const DEFAULT_JEV_MODEL: &str = "jev-latest";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct JevConfig {
     pub endpoint: String,
-    pub api_key: String,
+    pub(crate) api_key: String,
     pub model: String,
     pub timeout: Duration,
     pub max_retries: u32,
     pub initial_backoff: Duration,
+}
+
+impl fmt::Debug for JevConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JevConfig")
+            .field("endpoint", &"[REDACTED]")
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("initial_backoff", &self.initial_backoff)
+            .finish()
+    }
 }
 
 impl JevConfig {
@@ -58,6 +72,8 @@ impl JevConfig {
         }
     }
 
+    /// Sets a custom endpoint. The configured bearer key is sent to this URL;
+    /// only use an endpoint you trust.
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = endpoint.into();
         self
@@ -92,6 +108,15 @@ mod tests {
         assert_eq!(cfg.endpoint, OFFICIAL_JEV_SYSTEMONE_ENDPOINT);
         assert_eq!(cfg.model, DEFAULT_JEV_MODEL);
         assert_eq!(cfg.api_key, "test_key");
+    }
+
+    #[test]
+    fn debug_redacts_api_key() {
+        let cfg = JevConfig::new("a-realistic-secret-value-for-test");
+        let debug = format!("{cfg:?}");
+
+        assert!(!debug.contains(&cfg.api_key));
+        assert!(debug.contains("[REDACTED]"));
     }
 
     #[test]

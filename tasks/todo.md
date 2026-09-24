@@ -45,6 +45,20 @@ Each is machine-checkable. The work is done when all six hold.
 5. Generator is deterministic: re-running it leaves `git status` clean.
 6. Criteria 1–3 are asserted by `cargo test --workspace --all-targets`, which CI already runs.
 
+## Execution Order
+
+Tasks are numbered for reading, but they do not dispatch in that order. Task 3 is purely additive —
+it grows the template literals without touching generation logic, so it commits green on its own.
+Tasks 1, 2 and 4 are atomic by design: the guard test is red until the regenerated fixtures land, so
+they must be one commit or `main` goes red.
+
+| Dispatch | Tasks | Why grouped |
+| :--- | :--- | :--- |
+| A | 3 | Additive content only; independently green |
+| B | 1 + 2 + 4 | Test, generator fix and regenerated data must land together |
+| C | 5 | Depends on B's corpus |
+| D | 6 | Documents the outcome of B and C |
+
 ## Required Template Pool Sizes
 
 Derived from `int(count * ratio)` per split with `clean` absorbing the remainder (this reproduces the
@@ -771,11 +785,77 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ## Review
 
-_Filled in as tasks complete._
+**Paused 2026-09-24.** Branch `feat/held-out-evaluation-corpus`, working tree clean, 57/57 tests green,
+`cargo fmt` and `cargo clippy -- -D warnings` both clean. Not pushed.
 
-- [ ] Task 1 — Guard test (RED)
-- [ ] Task 2 — Disjoint partitioning
-- [ ] Task 3 — Pool expansion to 200
-- [ ] Task 4 — Regenerate, guard green
-- [ ] Task 5 — Recalibrate frozen config
+- [x] Task 1 — Guard test (RED) — `c1149b5`
+- [x] Task 2 — Disjoint partitioning — `c1149b5`
+- [x] Task 3 — Pool expansion to 200 — `3ef3140`
+- [x] Task 4 — Regenerate, guard green — `c1149b5`
+- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); **Steps 3-6 BLOCKED**
 - [ ] Task 6 — Documentation and 0.2.0
+
+### Outcome against the success criteria
+
+| # | Criterion | Result |
+| :--- | :--- | :--- |
+| 1 | Zero cross-split context overlap | **Met** — all six pairwise intersections are 0 |
+| 2 | Zero intra-split repeats | **Met** — 30/30, 30/30, 40/40, 100/100 records to distinct contexts |
+| 3 | 200 distinct contexts over 200 records | **Met** — union is exactly 200 |
+| 4 | Class distribution preserved | **Met** — guarded by `every_split_keeps_the_intended_class_mix` |
+| 5 | Generator deterministic | **Met** — re-running leaves fixture hashes identical |
+| 6 | Criteria 1-3 asserted in CI | **Met** — 4 tests in `fixture_integrity.rs`; suite went 53 → 57 |
+
+Red state before the fix matched the plan's prediction exactly: 1 passed, 3 failed, with intersections
+15/14/21/14/21/22 and a 34-context union.
+
+### BLOCKER: the calibration sweep never produces a result
+
+`run_calibration_phase` (`crates/reflex-cli/src/commands/experiment.rs:572-652`) seeds its search
+variables with the values it is supposed to discover:
+
+```rust
+let mut best_tau = 0.28;        // == the current frozen value
+let mut best_quality = 0.38;    // == the current frozen value
+let mut best_coverage = 0.0;
+```
+
+They are overwritten only when a candidate has `false_accept_count == 0` **and**
+`frontier_miss_rate == Some(0.0)`. Measured on both corpora, no candidate ever satisfies this:
+
+| Corpus | Distinct contexts | False accepts | Frontier miss rate | Printed "best point" |
+| :--- | ---: | ---: | ---: | :--- |
+| Old (contaminated) | 22 / 40 | 3 | 25.00% | `0.28 / 0.38 — 0 FA, 0 miss` |
+| New (clean) | 40 / 40 | 1 | 8.33% | `0.28 / 0.38 — 0 FA, 0 miss` |
+
+So the frozen thresholds were never a fit — they are the seeds, surviving a search that always fails.
+Worse, line 649 hardcodes `(0 False Accepts, 0 frontier misses, ...)` into the format string, so the
+success claim is a constant rather than a measurement and cannot be falsified from the output.
+
+The defect predates this branch: it reproduces identically on the pre-change fixtures.
+
+**Why this blocks Task 5:** freezing 0.28/0.38 now would re-freeze the seeds while the tool prints an
+unearned claim — the exact failure mode this work set out to remove.
+
+### Decision needed before resuming
+
+What should "best operating point" mean when no candidate achieves zero false accepts and zero
+frontier misses? Three options considered:
+
+1. **Honest reporting only.** Print the real metrics; say explicitly when no candidate qualifies.
+   Leave 0.28/0.38 but document them as defaults, not a fit. Smallest change.
+2. **Relax the selection rule (recommended).** Lexicographic: minimise false accepts, then miss rate,
+   then maximise coverage. On the clean corpus this selects **0.25 / 0.45** (0 false accepts, 8.33%
+   miss, 70.0% coverage) — the frozen config would become a genuine sweep result for the first time.
+   Combine with option 1's reporting fix.
+3. **Widen the grid.** Only six clustered points are swept; a qualifying point may exist outside it.
+
+Note under every option: 8.33% frontier miss (1 of 12 escalation-required tasks) appears at every grid
+point on the clean corpus. That is a substantive finding about the policy, not an artifact.
+
+### Resume checklist
+
+1. Answer the decision above.
+2. Finish Task 5 Steps 3-6 accordingly.
+3. Execute Task 6 (docs + 0.2.0), adjusting the CHANGELOG bullet about refitting to match the decision.
+4. `main` is also still 1 commit ahead of `origin/main` (the 0.1.1 changelog) and unpushed.

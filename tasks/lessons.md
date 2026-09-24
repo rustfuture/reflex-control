@@ -48,6 +48,27 @@ the aggregate that matters is often absent from the documented per-pair breakdow
 
 ---
 
+## L5 — Never seed a search variable with a plausible default
+
+**Context (2026-09-24):** `run_calibration_phase` initialised `best_tau = 0.28` and
+`best_quality = 0.38` — the very values the sweep was supposed to discover — and overwrote them only
+on a strict match. No candidate ever matched, so the function returned its seeds and the caller froze
+them as "the best observed operating point." The bug survived two releases because a failed search and
+a successful one are indistinguishable when both return the same type.
+
+**Rule:** A search result is `Option<T>`, not `T`. Initialise with `None` so "no candidate qualified"
+is a distinct, unignorable state that the compiler forces the caller to handle. If a default is
+genuinely wanted, apply it at the call site with `unwrap_or`, where the fallback is visible.
+
+**Companion rule:** Never bake an outcome claim into a format string. Line 649 printed
+`(0 False Accepts, 0 frontier misses)` as literal text regardless of what was measured, making the
+report self-confirming. Print the measured values, or print nothing.
+
+**Generalization:** Any code that reports its own success is suspect until the reported numbers are
+read from the same variables the logic branched on.
+
+---
+
 ## L4 — Version truth lives in three places and drifts silently
 
 **Context (2026-09-24):** `Cargo.toml` said `0.1.1` and tag `v0.1.1` was pushed, but `CHANGELOG.md` stopped

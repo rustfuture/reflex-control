@@ -43,6 +43,10 @@ pub struct ExperimentArgs {
     #[arg(long)]
     pub risk_threshold: Option<f64>,
 
+    /// Override clean-quality acceptance threshold theta_clean
+    #[arg(long)]
+    pub quality_threshold: Option<f64>,
+
     /// Path to SQLite database for telemetry
     #[arg(long, default_value = "reflex.db")]
     pub db: String,
@@ -671,7 +675,8 @@ fn freeze_configuration(
 
 async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     let tau = args.risk_threshold.unwrap_or(0.28);
-    freeze_configuration(tau, 0.38)?;
+    let quality = args.quality_threshold.unwrap_or(0.38);
+    freeze_configuration(tau, quality)?;
     Ok(())
 }
 

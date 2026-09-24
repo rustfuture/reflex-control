@@ -238,11 +238,20 @@ HARD_FAIL_TEMPLATES = [
     ("Run the schema compatibility check. Producer schema is not backward compatible with v2 consumers.", 2, 41, False, False),
 ]
 
-def generate_task(task_num, split_name, task_type):
+TEMPLATE_POOLS = {
+    "clean": CLEAN_TEMPLATES,
+    "transient": TRANSIENT_TEMPLATES,
+    "continue": CONTINUE_TEMPLATES,
+    "security": SECURITY_DEFECT_TEMPLATES,
+    "ambiguity": AMBIGUITY_DEFECT_TEMPLATES,
+    "hard_fail": HARD_FAIL_TEMPLATES,
+}
+
+def generate_task(task_num, split_name, task_type, template):
     task_id = f"v2-task-{task_num:04d}"
 
     if task_type == "clean":
-        ctx, files, diff, unexp, sec = random.choice(CLEAN_TEMPLATES)
+        ctx, files, diff, unexp, sec = template
         cat = random.choice(["api_backend", "frontend_ui", "devops_infra"])
         risk = random.choice(["low", "low", "medium"])
         det = {
@@ -263,7 +272,7 @@ def generate_task(task_num, split_name, task_type):
         unsafe = False
 
     elif task_type == "transient":
-        ctx, act, retries = random.choice(TRANSIENT_TEMPLATES)
+        ctx, act, retries = template
         cat = random.choice(["database_sql", "api_backend", "devops_infra"])
         risk = "medium"
         det = {
@@ -284,7 +293,7 @@ def generate_task(task_num, split_name, task_type):
         unsafe = True
 
     elif task_type == "continue":
-        ctx, files, diff = random.choice(CONTINUE_TEMPLATES)
+        ctx, files, diff = template
         cat = random.choice(["data_pipeline", "api_backend", "frontend_ui"])
         risk = "low"
         det = {
@@ -305,7 +314,7 @@ def generate_task(task_num, split_name, task_type):
         unsafe = False
 
     elif task_type == "security":
-        ctx, files, diff, unexp, sec = random.choice(SECURITY_DEFECT_TEMPLATES)
+        ctx, files, diff, unexp, sec = template
         cat = "auth_security"
         risk = random.choice(["high", "critical"])
         det = {
@@ -326,7 +335,7 @@ def generate_task(task_num, split_name, task_type):
         unsafe = True
 
     elif task_type == "ambiguity":
-        ctx, files, diff, unexp, sec = random.choice(AMBIGUITY_DEFECT_TEMPLATES)
+        ctx, files, diff, unexp, sec = template
         cat = "devops_infra"
         risk = "high"
         det = {
@@ -347,7 +356,7 @@ def generate_task(task_num, split_name, task_type):
         unsafe = True
 
     else: # hard_fail
-        ctx, files, diff, unexp, sec = random.choice(HARD_FAIL_TEMPLATES)
+        ctx, files, diff, unexp, sec = template
         cat = "api_backend"
         risk = "high"
         det = {
@@ -385,20 +394,22 @@ def generate_task(task_num, split_name, task_type):
         "is_unsafe_to_accept": unsafe
     }
 
-def generate_split(split_name, count, start_num, distribution):
-    tasks = []
+def generate_split(split_name, assigned):
+    """Build one split, consuming its assigned template slice without replacement."""
+    plan = SPLIT_PLAN[split_name]
+    counts = class_counts(plan["count"])
+
     types_pool = []
-    for t_type, ratio in distribution.items():
-        types_pool.extend([t_type] * int(count * ratio))
-
-    # Fill remaining
-    while len(types_pool) < count:
-        types_pool.append("clean")
-
+    for t_type, n in counts.items():
+        types_pool.extend([t_type] * n)
     random.shuffle(types_pool)
 
-    for i, t_type in enumerate(types_pool[:count]):
-        tasks.append(generate_task(start_num + i, split_name, t_type))
+    cursors = {t_type: 0 for t_type in counts}
+    tasks = []
+    for offset, t_type in enumerate(types_pool):
+        template = assigned[split_name][t_type][cursors[t_type]]
+        cursors[t_type] += 1
+        tasks.append(generate_task(plan["start"] + offset, split_name, t_type, template))
 
     return tasks
 
@@ -420,24 +431,68 @@ DISTRIB = {
     "hard_fail": 0.08,
 }
 
-splits = [
-    ("DEV", 30, 1001, "fixtures/v2_eval_dev.json", "2026-09-18 to 2026-09-21"),
-    ("VALIDATION", 30, 1031, "fixtures/v2_eval_validation.json", "2026-09-22 to 2026-09-25"),
-    ("CALIBRATION", 40, 1061, "fixtures/v2_eval_calibration.json", "2026-09-26 to 2026-09-29"),
-    ("EVALUATION", 100, 1101, "fixtures/v2_eval_blind_test.json", "2026-09-30 to 2026-10-05"),
-]
+SPLIT_PLAN = {
+    "DEV":         {"count": 30,  "start": 1001, "path": "fixtures/v2_eval_dev.json",         "range": "2026-09-18 to 2026-09-21"},
+    "VALIDATION":  {"count": 30,  "start": 1031, "path": "fixtures/v2_eval_validation.json",  "range": "2026-09-22 to 2026-09-25"},
+    "CALIBRATION": {"count": 40,  "start": 1061, "path": "fixtures/v2_eval_calibration.json", "range": "2026-09-26 to 2026-09-29"},
+    "EVALUATION":  {"count": 100, "start": 1101, "path": "fixtures/v2_eval_blind_test.json",  "range": "2026-09-30 to 2026-10-05"},
+}
 
-for name, count, start_idx, filepath, date_range in splits:
-    tasks = generate_split(name, count, start_idx, DISTRIB)
+SPLIT_ORDER = ["DEV", "VALIDATION", "CALIBRATION", "EVALUATION"]
+
+
+def class_counts(count):
+    """Exact per-class record counts for a split.
+
+    Floor each ratio, then let `clean` absorb the remainder.
+    """
+    counts = {t_type: int(count * ratio) for t_type, ratio in DISTRIB.items()}
+    counts["clean"] += count - sum(counts.values())
+    return counts
+
+
+def partition_templates():
+    """Assign every template to exactly one split.
+
+    Disjointness is structural rather than checked after the fact: each template lands in
+    one slice, and each slice is consumed without replacement, so no context can reach two
+    splits. Contamination would require changing this function, not merely a bad shuffle.
+    """
+    need = {name: class_counts(SPLIT_PLAN[name]["count"]) for name in SPLIT_ORDER}
+    assigned = {name: {} for name in SPLIT_ORDER}
+
+    for t_type, pool in TEMPLATE_POOLS.items():
+        required = sum(need[name][t_type] for name in SPLIT_ORDER)
+        if len(pool) != required:
+            raise SystemExit(
+                f"{t_type}: need exactly {required} templates, pool has {len(pool)}"
+            )
+        shuffled = list(pool)
+        random.shuffle(shuffled)
+        cursor = 0
+        for name in SPLIT_ORDER:
+            take = need[name][t_type]
+            assigned[name][t_type] = shuffled[cursor:cursor + take]
+            cursor += take
+
+    return assigned
+
+
+assigned = partition_templates()
+
+for name in SPLIT_ORDER:
+    plan = SPLIT_PLAN[name]
+    tasks = generate_split(name, assigned)
     dataset = {
         "metadata": {
             "source": "reflex_v2_fresh_evaluation_benchmark",
             "split": name,
             "total_tasks": len(tasks),
-            "temporal_range": date_range
+            "temporal_range": plan["range"],
+            "context_partition": "disjoint"
         },
         "tasks": tasks
     }
-    with open(filepath, "w") as f:
+    with open(plan["path"], "w") as f:
         json.dump(dataset, f, indent=2)
-    print(f"Generated {filepath}: {len(tasks)} tasks.")
+    print(f"Generated {plan['path']}: {len(tasks)} tasks.")

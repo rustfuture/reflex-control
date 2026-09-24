@@ -14,3 +14,8 @@ reflex-telemetry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+# Integration tests are separate crates and cannot see `[dependencies]`.
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

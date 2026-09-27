@@ -43,7 +43,7 @@ pub struct ExperimentArgs {
     #[arg(long)]
     pub risk_threshold: Option<f64>,
 
-    /// Override clean-quality acceptance threshold theta_clean
+    /// Clean-quality acceptance threshold theta_clean for --phase freeze (requires --risk-threshold); ignored by other phases
     #[arg(long)]
     pub quality_threshold: Option<f64>,
 
@@ -220,21 +220,15 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
             run_evaluation_phase(&args).await?;
         }
         "all" => {
+            if args.dataset.is_some() {
+                return Err("--dataset cannot be used with --phase all: every phase would read the same file, so calibration and evaluation would share data".into());
+            }
             println!(
                 "\n>>> Starting Evaluation Protocol (DEV -> VAL -> CAL -> FREEZE -> EVALUATION)..."
             );
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
-            let selected = run_calibration_phase(&args).await?;
-            freeze_configuration(
-                selected.tau,
-                selected.quality,
-                sweep_provenance(
-                    &selected,
-                    &get_split_filepath(&args, "calibration"),
-                    &args.provider,
-                ),
-            )?;
+            freeze_from_sweep(&args).await?;
             run_evaluation_phase(&args).await?;
         }
         other => {
@@ -727,18 +721,7 @@ fn freeze_configuration(
 
 async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     match (args.risk_threshold, args.quality_threshold) {
-        (None, None) => {
-            let selected = run_calibration_phase(args).await?;
-            freeze_configuration(
-                selected.tau,
-                selected.quality,
-                sweep_provenance(
-                    &selected,
-                    &get_split_filepath(args, "calibration"),
-                    &args.provider,
-                ),
-            )
-        }
+        (None, None) => freeze_from_sweep(args).await,
         (Some(tau), Some(quality)) => freeze_configuration(
             tau,
             quality,
@@ -746,6 +729,25 @@ async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error
         ),
         _ => Err("--phase freeze takes both --risk-threshold and --quality-threshold, or neither to run the calibration sweep".into()),
     }
+}
+
+/// Runs the calibration sweep and freezes the selected point with its measured provenance.
+async fn freeze_from_sweep(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let selected = run_calibration_phase(args).await?;
+    let provider = if args.provider.eq_ignore_ascii_case("jev") {
+        "jev"
+    } else {
+        "mock"
+    };
+    freeze_configuration(
+        selected.tau,
+        selected.quality,
+        sweep_provenance(
+            &selected,
+            &get_split_filepath(args, "calibration"),
+            provider,
+        ),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1076,7 +1078,13 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     println!("==========================================================================");
     print_comparison_table(&[ma.clone(), mb.clone(), mc.clone(), me.clone()]);
 
-    save_markdown_artifact(&[ma, mb, mc, me], &args.provider)?;
+    let verified_held_out = args.dataset.is_none() && args.version != "v1";
+    save_markdown_artifact(
+        &[ma, mb, mc, me],
+        &args.provider,
+        &evaluation_file,
+        verified_held_out,
+    )?;
 
     Ok(())
 }
@@ -1434,17 +1442,30 @@ fn print_comparison_table(metrics: &[CandidateSummaryMetrics]) {
     println!("┘");
 }
 
+/// What the generated report may truthfully say about its evaluation data. Only the
+/// default v2 partitions are verified disjoint, by `fixture_integrity.rs` in CI.
+fn evaluation_data_note(path: &str, verified_held_out: bool) -> String {
+    if verified_held_out {
+        format!("`{path}` shares no task context with the development, validation, or calibration partitions (verified in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), but it is curated synthetic data.")
+    } else {
+        format!("`{path}` is not a verified held-out partition: its task-context overlap with the calibration data was not checked.")
+    }
+}
+
 fn save_markdown_artifact(
     metrics: &[CandidateSummaryMetrics],
     provider: &str,
+    eval_path: &str,
+    verified_held_out: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut md = String::new();
     md.push_str("# Reflex Control: Guarded Hybrid Architecture Empirical Benchmark\n\n");
-    md.push_str("**Evaluation Dataset**: 100 curated synthetic tasks (`fixtures/v2_eval_blind_test.json`; legacy filename)\n\n");
+    md.push_str(&format!("**Evaluation Dataset**: `{eval_path}`\n\n"));
     md.push_str(&format!("**Provider mode**: `{provider}`\n\n"));
-    md.push_str(
-        "> This is a generated experimental report, not production validation. The evaluation partition shares no task context with the development, validation, or calibration partitions, but it is curated synthetic data. Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
-    );
+    md.push_str(&format!(
+        "> This is a generated experimental report, not production validation. {} Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
+        evaluation_data_note(eval_path, verified_held_out)
+    ));
     md.push_str("### 1. Comparative Performance Matrix\n\n");
     md.push_str("| Metric ");
     for m in metrics {
@@ -1754,5 +1775,22 @@ mod tests {
         );
         assert!(notes.contains("provider mock"), "{notes}");
         assert!(!notes.contains("calibration partition"), "{notes}");
+    }
+
+    #[test]
+    fn evaluation_note_claims_held_out_only_when_verified() {
+        let verified = evaluation_data_note("fixtures/v2_eval_blind_test.json", true);
+        assert!(verified.contains("shares no task context"), "{verified}");
+        assert!(verified.contains("fixture_integrity.rs"), "{verified}");
+
+        let unverified = evaluation_data_note("fixtures/fresh_eval_blind_test.json", false);
+        assert!(
+            unverified.contains("not a verified held-out partition"),
+            "{unverified}"
+        );
+        assert!(
+            !unverified.contains("shares no task context"),
+            "{unverified}"
+        );
     }
 }

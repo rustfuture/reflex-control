@@ -951,7 +951,7 @@ cargo run -q --bin reflex -- experiment --help
 
 Expected: clippy clean; help output now lists `--quality-threshold`.
 
-- [ ] **Step 3: Sweep and freeze in one command**
+- [x] **Step 3: Sweep and freeze in one command**
 
 **Requires Task 5A (done).** Since `dcc62ec`, `--phase freeze` without thresholds runs the calibration sweep
 itself and freezes the selected point together with its measured provenance — no copying numbers by hand.
@@ -970,7 +970,7 @@ three times (dry run, 5A smoke test, `a0dd1c0` smoke test):
 If the selected point differs from 0.25 / 0.45, stop: save the full table into the Review section and
 report instead of committing.
 
-- [ ] **Step 4: Inspect the frozen file**
+- [x] **Step 4: Inspect the frozen file**
 
 Run: `git diff fixtures/frozen_hybrid_config.json`
 
@@ -978,7 +978,7 @@ Expected: `optimal_tau_accept` 0.25, `clean_quality_accept_threshold` 0.45, `max
 `mandatory_frontier_risk` unchanged (0.58 / 0.7), a new `timestamp`, and `validation_notes` reading
 `… Measured on fixtures/v2_eval_calibration.json with provider mock: 0 false accepts, 1/12 frontier misses, 70.0% …`.
 
-- [ ] **Step 5: Record old and new thresholds side by side**
+- [x] **Step 5: Record old and new thresholds side by side**
 
 Write both sets, plus the selected point's false accepts, frontier misses and coverage, into the
 Review section of this file. Old values for reference:
@@ -986,7 +986,7 @@ Review section of this file. Old values for reference:
 `mandatory_frontier_risk` 0.70. If a threshold moves materially, that movement is itself the finding —
 it quantifies how much the contamination was distorting the fit.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add fixtures/frozen_hybrid_config.json tasks/todo.md
@@ -1015,7 +1015,7 @@ past tense and name the corpus they were measured on — they were real measurem
 - Modify: `crates/reflex-cli/src/commands/experiment.rs` (lines ~684, ~689, ~1378)
 - Modify: `docs/experiments/live_experiment_hybrid_results.md` (line 8)
 
-- [ ] **Step 1: `fixtures/README.md`**
+- [x] **Step 1: `fixtures/README.md`**
 
 Line 9 — replace the sentence beginning "Task contexts are sampled from a small set of templates" with:
 
@@ -1041,7 +1041,7 @@ The four partitions hold disjoint task contexts: 200 records over 200 distinct c
 
 Line 36 (`fresh_eval_*` row) stays unchanged — those legacy fixtures are still contaminated.
 
-- [ ] **Step 2: `README.md`**
+- [x] **Step 2: `README.md`**
 
 Line 168 — replace the paragraph beginning "The fixture filename says `blind_test`" with:
 
@@ -1057,7 +1057,7 @@ Line 189 — the `v2_eval_blind_test.json` row's purpose cell becomes
 Line 193 — the `frozen_hybrid_config.json` row becomes
 `Frozen 0.2.0 policy parameters ($\tau_{\text{accept}} = <T>, \theta_{\text{clean}} = <Q>, \text{risk}_{\text{frontier}} = 0.70$)`.
 
-- [ ] **Step 3: Runtime text in `experiment.rs`**
+- [x] **Step 3: Runtime text in `experiment.rs`**
 
 Line ~684:
 
@@ -1078,7 +1078,7 @@ Replace the sentence
 with
 `The evaluation partition shares no task context with the development, validation, or calibration partitions, but it is curated synthetic data.`
 
-- [ ] **Step 4: `docs/experiments/live_experiment_hybrid_results.md` line 8**
+- [x] **Step 4: `docs/experiments/live_experiment_hybrid_results.md` line 8**
 
 Replace the bullet beginning "The fixture has 32 distinct task contexts" with:
 
@@ -1086,7 +1086,7 @@ Replace the bullet beginning "The fixture has 32 distinct task contexts" with:
 - At the time of this run the fixture (pre-0.2.0) had 32 distinct task contexts, shared with the development (21), validation (21), and calibration (22) partitions, so this run was not a blind or context-independent evaluation. The fixture has since been regenerated as a held-out partition; these figures were not re-measured on it.
 ```
 
-- [ ] **Step 5: Verify no stale claim survives**
+- [x] **Step 5: Verify no stale claim survives**
 
 Run:
 
@@ -1098,7 +1098,7 @@ git grep -nE '0\.28|0\.38' -- '*.md' ':!tasks/*' ':!CHANGELOG.md'
 Expected: first command prints only `fixtures/README.md:36` (the legacy `fresh_eval_*` row) and the two
 past-tense mentions from Steps 2 and 4. Second prints nothing, unless `<T>`/`<Q>` happen to equal them.
 
-- [ ] **Step 6: Add the 0.2.0 CHANGELOG entry**
+- [x] **Step 6: Add the 0.2.0 CHANGELOG entry**
 
 Insert above `## 0.1.1 - 2026-09-23`, dated with `date +%F` on the day of the commit:
 
@@ -1113,13 +1113,13 @@ Insert above `## 0.1.1 - 2026-09-23`, dated with `date +%F` on the day of the co
 - Refit the frozen configuration on the held-out calibration partition: tau_accept <T>, quality threshold <Q>.
 ```
 
-- [ ] **Step 7: Bump the version (lesson L4)**
+- [x] **Step 7: Bump the version (lesson L4)**
 
 Set `version = "0.2.0"` in root `Cargo.toml` (line 16), then `cargo check --workspace` so `Cargo.lock`
 updates. Confirm the three sources agree: `Cargo.toml` says 0.2.0, the top `## ` of `CHANGELOG.md` says
 0.2.0, and the tag will be created as `v0.2.0` in Task 7.
 
-- [ ] **Step 8: Full gate, then commit**
+- [x] **Step 8: Full gate, then commit**
 
 ```bash
 cargo fmt --all -- --check
@@ -1201,16 +1201,19 @@ record `git rev-parse feat/held-out-evaluation-corpus`, then `git branch -d` loc
 
 ## Review
 
-**Paused 2026-09-24.** Branch `feat/held-out-evaluation-corpus`, working tree clean, 57/57 tests green,
-`cargo fmt` and `cargo clippy -- -D warnings` both clean. Not pushed.
+**Updated 2026-09-27 — Tasks 1-6 done, awaiting publish.** Branch `feat/held-out-evaluation-corpus`,
+working tree clean, **66/66** tests on stable and MSRV 1.88, `cargo fmt` and `cargo clippy -- -D warnings`
+clean. Every task passed a spec review and a code-quality review; the whole branch passed a final review
+(approved after fixes `7a8b1d2`, `b8ddff9`, `7beabc8`). Not pushed.
 
 - [x] Task 1 — Guard test (RED) — `c1149b5`
 - [x] Task 2 — Disjoint partitioning — `c1149b5`
 - [x] Task 3 — Pool expansion to 200 — `3ef3140`
 - [x] Task 4 — Regenerate, guard green — `c1149b5`
 - [x] Task 5A — Lexicographic selection + measured report — `c0b5508`, `dcc62ec`, `a0dd1c0`
-- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); Steps 3-6 next
-- [ ] Task 6 — Documentation and 0.2.0
+- [x] Task 5 — Recalibrate frozen config — `c22b1ce`, `4b81a33` (0.28/0.38 → 0.25/0.45)
+- [x] Task 6 — Documentation and 0.2.0 — `9a259a6`
+- [x] Final-review fixes — `7a8b1d2` (report states held-out only where verified; `--phase all` rejects `--dataset`), `b8ddff9` (guards + CI determinism job), `7beabc8` (claims scoped to mock provider)
 - [ ] Task 7 — Publish (push `main`, push branch, PR, tag `v0.2.0`, release)
 
 ### Outcome against the success criteria
@@ -1328,9 +1331,25 @@ were the search's seed values surviving a sweep that never matched, not a fit.
   then applies `--risk-threshold` as an override (`args.risk_threshold.unwrap_or(frozen_tau)`) and ignores
   `--quality-threshold`, so the frozen and evaluated tau can differ.
 
+### Findings from the final review (not changed; recorded for follow-up)
+
+- **Mock evaluation of the refit config on the held-out split** (reviewer's run): Candidate E 0/57 false
+  accepts, 0/31 frontier misses, 69.0% coverage. Mock signals ignore context, so this reflects class
+  structure (45+12+12 autonomous tasks), not generalization — not quoted in the docs for that reason.
+- **Feature-space overlap:** 20/100 evaluation records share a deterministic-feature vector with a calibration
+  record (was 81/100). The transient class has only 2 distinct vectors, so it cannot be held out in feature
+  space. Disjointness is at context-text level, which is what the live provider reads.
+- **Near-duplicate template (dev↔validation, Jaccard 0.73):** `generate_v2_datasets.py:28` vs `:93` (CSS
+  bundle). Guard catches exact reuse only; README now says so. Replacing one needs a fixture regeneration.
+- **Report trusts the evaluation file, not the freeze source:** `--phase freeze --dataset <eval file>` then
+  `--phase evaluation` still prints "verified held-out". Fix: surface the frozen `validation_notes` in the report.
+- **Console banner/table header** still say "100" tasks under `--dataset` (cosmetic; next line prints the real count).
+- **`--risk-threshold` help** doesn't say it also overrides tau in `--phase evaluation` (same root cause as the
+  `--phase all` finding above).
+
 ### Resume checklist
 
 1. ~~Task 5A~~ — done (`c0b5508`, `dcc62ec`, `a0dd1c0`; 65/65 tests).
-2. Task 5 Steps 3-6: `--phase freeze --provider mock`, check 0.25 / 0.45, record old vs new here, commit.
-3. Task 6: docs, runtime text, CHANGELOG 0.2.0, version bump.
+2. ~~Task 5~~ — done (`4b81a33`).
+3. ~~Task 6 + final-review fixes~~ — done.
 4. Task 7: push `main` (still 1 ahead of `origin/main`), push branch, PR, then tag and release.

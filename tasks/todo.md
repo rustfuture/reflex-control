@@ -629,12 +629,21 @@ a format string.
 earlier grid point deterministically, with no extra tie-break code. Coverage is `f64`, so it is compared
 with `total_cmp` (a total order; no `partial_cmp().unwrap()`).
 
+**Done:** `c0b5508` (Steps 1-7), plus two review follow-ups:
+- `dcc62ec` — `freeze_configuration` takes its `validation_notes`; `--phase freeze` with no thresholds runs the
+  sweep and records the selected point's measured counts (`sweep_provenance`), with both thresholds records a
+  manual override, with one errors. Removes the last seeded `unwrap_or(0.28)/unwrap_or(0.38)` in the freeze path.
+- `a0dd1c0` — the provenance note names the dataset path and provider actually used, not "the calibration
+  partition" (wrong under `--dataset`).
+
+Gate at `a0dd1c0`: fmt + clippy clean, **65/65** tests. Spec review ✅, code-quality review approved.
+
 **Files:**
 - Modify: `crates/reflex-cli/src/commands/experiment.rs` (new items above `run_calibration_phase`;
   selection block at lines ~572-652; `"all"` arm at ~228-229; `validation_notes` in
   `freeze_configuration`; tests in `mod tests` at ~1519)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append inside `mod tests` in `experiment.rs`, after `candidate_rates_with_empty_denominators_are_unavailable`:
 
@@ -708,7 +717,7 @@ Append inside `mod tests` in `experiment.rs`, after `candidate_rates_with_empty_
     }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cargo test -p reflex-cli --bin reflex -- selection report_ > /tmp/rc-5a-red.txt 2>&1; grep -E 'error\[E0|cannot find' /tmp/rc-5a-red.txt`
 
@@ -716,7 +725,7 @@ Expected: compile failure — `cannot find struct, variant or union type SweepPo
 `cannot find function select_operating_point` / `describe_operating_point`. (Per **L1**: full output
 goes to the file; filter only when reading.)
 
-- [ ] **Step 3: Add the type, the selection function and the report function**
+- [x] **Step 3: Add the type, the selection function and the report function**
 
 Insert directly above `async fn run_calibration_phase(`:
 
@@ -758,13 +767,13 @@ fn describe_operating_point(p: &SweepPoint) -> String {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p reflex-cli --bin reflex -- selection report_ > /tmp/rc-5a-green.txt 2>&1; grep 'test result' /tmp/rc-5a-green.txt`
 
 Expected: `test result: ok. 7 passed; 0 failed`.
 
-- [ ] **Step 5: Route `run_calibration_phase` through the new functions**
+- [x] **Step 5: Route `run_calibration_phase` through the new functions**
 
 Change its signature:
 
@@ -849,7 +858,7 @@ In `freeze_configuration`, replace the `validation_notes` string so the file rec
         validation_notes: "Parameters selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
 ```
 
-- [ ] **Step 6: Run the full gate**
+- [x] **Step 6: Run the full gate**
 
 Run:
 
@@ -861,7 +870,7 @@ cargo test --workspace --all-targets > /tmp/rc-5a-full.txt 2>&1; grep 'test resu
 
 Expected: fmt and clippy silent; test totals sum to **64** (57 before + 7 new), 0 failed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/reflex-cli/src/commands/experiment.rs
@@ -942,29 +951,32 @@ cargo run -q --bin reflex -- experiment --help
 
 Expected: clippy clean; help output now lists `--quality-threshold`.
 
-- [ ] **Step 3: Run the calibration sweep on the clean corpus**
+- [ ] **Step 3: Sweep and freeze in one command**
 
-**Requires Task 5A committed.** Without it this step prints the seeds, not a result.
+**Requires Task 5A (done).** Since `dcc62ec`, `--phase freeze` without thresholds runs the calibration sweep
+itself and freezes the selected point together with its measured provenance — no copying numbers by hand.
 
-Run: `cargo run --bin reflex -- experiment --phase calibration --provider mock > /tmp/rc-cal.txt 2>&1; grep -A1 'Selected Operating Point' /tmp/rc-cal.txt`
+Run: `cargo run -q --bin reflex -- experiment --phase freeze --provider mock > /tmp/rc-freeze.txt 2>&1; grep -E 'Selected|WARNING|FROZEN' /tmp/rc-freeze.txt`
 
-`--provider mock` avoids needing a live TypeSafe Jev key. Expected — matches the 2026-09-24 manual
-measurement and was reproduced by a dry run of Task 5A's exact code on 2026-09-27:
+`--provider mock` is required: the default provider is `jev` (live API, needs a key). Expected — reproduced
+three times (dry run, 5A smoke test, `a0dd1c0` smoke test):
 
 ```
 >>> Selected Operating Point: tau_accept = 0.25, quality_thresh = 0.45 (0 false accepts, 1/12 frontier misses, 70.0% autonomous action coverage)
 >>> WARNING: no grid point reached zero false accepts and zero frontier misses; ...
+>>> Configuration FROZEN to fixtures/frozen_hybrid_config.json
 ```
 
-Record `<T>` and `<Q>` from the output, **not** from this expectation. If they differ from 0.25 / 0.45,
-stop and record the full table in the Review section before freezing — a mismatch means the manual
-measurement or the new selection code is wrong, and that must be resolved first.
+If the selected point differs from 0.25 / 0.45, stop: save the full table into the Review section and
+report instead of committing.
 
-- [ ] **Step 4: Freeze the swept values**
+- [ ] **Step 4: Inspect the frozen file**
 
-Run: `cargo run --bin reflex -- experiment --phase freeze --risk-threshold <T> --quality-threshold <Q>`
+Run: `git diff fixtures/frozen_hybrid_config.json`
 
-Expected: `>>> Configuration FROZEN to fixtures/frozen_hybrid_config.json`.
+Expected: `optimal_tau_accept` 0.25, `clean_quality_accept_threshold` 0.45, `max_risk_small_reasoner` and
+`mandatory_frontier_risk` unchanged (0.58 / 0.7), a new `timestamp`, and `validation_notes` reading
+`… Measured on fixtures/v2_eval_calibration.json with provider mock: 0 false accepts, 1/12 frontier misses, 70.0% …`.
 
 - [ ] **Step 5: Record old and new thresholds side by side**
 
@@ -980,9 +992,10 @@ it quantifies how much the contamination was distorting the fit.
 git add fixtures/frozen_hybrid_config.json tasks/todo.md
 git commit -m "fix(fixtures): refit the frozen configuration on the clean calibration split
 
-The previous 0.28/0.38 were the sweep's seed values, never a fit. With the
-held-out corpus and lexicographic selection, the sweep selects <T>/<Q>
-(<FA> false accepts, <M>/<R> frontier misses, <C>% coverage).
+The previous 0.28/0.38 were the sweep's seed values, never a fit, and on the
+held-out calibration split they produce 1 false accept. The fixed sweep
+selects 0.25/0.45: 0 false accepts, 1/12 frontier misses, 70.0% coverage
+(mock provider), recorded in the file's validation_notes.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -995,7 +1008,7 @@ Every statement that the corpus is contaminated becomes false once Task 4 lands,
 0.28 / 0.38 as the fitted values becomes false once Task 5 lands. Historical claims stay, but move to the
 past tense and name the corpus they were measured on — they were real measurements of the *old* data.
 
-`<T>` / `<Q>` below are the values recorded in Task 5 Step 3.
+`<T>` / `<Q>` below are **0.25** / **0.45** (Task 5); use the values actually in `fixtures/frozen_hybrid_config.json`.
 
 **Files:**
 - Modify: `fixtures/README.md`, `README.md`, `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`
@@ -1096,7 +1109,7 @@ Insert above `## 0.1.1 - 2026-09-23`, dated with `date +%F` on the day of the co
 - Expanded the task template pool from 34 to 200 so each of the 200 records carries a unique context.
 - Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness, intra-split uniqueness, and the 200-context total in CI.
 - Fixed the calibration sweep: it returned its seed values (0.28 / 0.38) because no grid point met its strict zero-error rule, and it printed "0 False Accepts, 0 frontier misses" as literal text. It now selects lexicographically (false accepts, frontier misses, coverage) and reports the selected point's measured counts, warning when it is not error-free.
-- Added `--quality-threshold` to the freeze step, which previously always wrote 0.38.
+- Changed `reflex experiment --phase freeze`: with no thresholds it now runs the calibration sweep and freezes the selected point, recording the dataset, provider and measured counts in `validation_notes` (previously it silently wrote 0.28 / 0.38). With `--risk-threshold` and the new `--quality-threshold` it records a manual override; with only one of them it errors. Because `--provider` defaults to `jev`, a bare `--phase freeze` now calls the live API — pass `--provider mock` for an offline run.
 - Refit the frozen configuration on the held-out calibration partition: tau_accept <T>, quality threshold <Q>.
 ```
 
@@ -1114,7 +1127,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets > /tmp/rc-6-full.txt 2>&1; grep 'test result' /tmp/rc-6-full.txt
 ```
 
-Expected: fmt and clippy silent; 64 tests, 0 failed.
+Expected: fmt and clippy silent; 65 tests, 0 failed.
 
 ```bash
 git add README.md fixtures/README.md CHANGELOG.md Cargo.toml Cargo.lock \
@@ -1195,8 +1208,8 @@ record `git rev-parse feat/held-out-evaluation-corpus`, then `git branch -d` loc
 - [x] Task 2 — Disjoint partitioning — `c1149b5`
 - [x] Task 3 — Pool expansion to 200 — `3ef3140`
 - [x] Task 4 — Regenerate, guard green — `c1149b5`
-- [ ] Task 5A — Lexicographic selection + measured report (decided 2026-09-27; unblocks Task 5)
-- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); Steps 3-6 wait on 5A
+- [x] Task 5A — Lexicographic selection + measured report — `c0b5508`, `dcc62ec`, `a0dd1c0`
+- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); Steps 3-6 next
 - [ ] Task 6 — Documentation and 0.2.0
 - [ ] Task 7 — Publish (push `main`, push branch, PR, tag `v0.2.0`, release)
 
@@ -1280,9 +1293,20 @@ Mock sweep on the clean calibration partition:
 The currently frozen 0.28 / 0.38 produces a false accept on held-out data. Moving to 0.25 / 0.45 trades
 2.5 points of coverage for eliminating it.
 
+### Findings from Task 5A review (not changed; recorded for follow-up)
+
+- **Selected point is on the grid boundary** (lowest tau, highest Q). The grid likely does not bracket the
+  optimum — strengthens the case for option 3 (widen the grid).
+- **No coverage floor.** Pure lexicographic order would pick an escalate-everything point (0 FA, 0 miss, ~0%
+  coverage) over 1 FA at 70%. Not reachable on the current grid; a minimum-coverage constraint is a design
+  decision for later.
+- **`--phase all` with threshold args** (pre-existing): `all` freezes the swept tau, but the evaluation phase
+  then applies `--risk-threshold` as an override (`args.risk_threshold.unwrap_or(frozen_tau)`) and ignores
+  `--quality-threshold`, so the frozen and evaluated tau can differ.
+
 ### Resume checklist
 
-1. Task 5A (TDD: 7 tests red → green, full gate at 64 tests).
-2. Task 5 Steps 3-6: run the sweep, check it selects 0.25 / 0.45, freeze, record old vs new here.
+1. ~~Task 5A~~ — done (`c0b5508`, `dcc62ec`, `a0dd1c0`; 65/65 tests).
+2. Task 5 Steps 3-6: `--phase freeze --provider mock`, check 0.25 / 0.45, record old vs new here, commit.
 3. Task 6: docs, runtime text, CHANGELOG 0.2.0, version bump.
 4. Task 7: push `main` (still 1 ahead of `origin/main`), push branch, PR, then tag and release.

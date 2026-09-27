@@ -76,3 +76,18 @@ at `0.1.0`. No test checks that these agree, so nothing caught it.
 
 **Rule:** When touching a release, check all three together: `Cargo.toml` version, the newest git tag, and
 the top `## ` heading in `CHANGELOG.md`.
+
+---
+
+## L6 — A throwaway worktree must not share `target/` with the real checkout
+
+**Mistake (2026-09-27):** Dry-ran a plan in a temporary `git worktree` with
+`CARGO_TARGET_DIR` pointed at the main checkout's `target/` to reuse the build cache, then deleted the
+worktree. `fixture_integrity.rs` reads fixtures via `env!("CARGO_MANIFEST_DIR")`, which is baked in at
+compile time, so the cached test binary kept pointing at the deleted worktree. The next real run failed
+with 4 spurious `No such file or directory` errors until `cargo clean -p reflex-calibration`.
+
+**Rule:** Give a throwaway worktree its own target dir (the default), or `cargo clean -p <crate>` for every
+crate that uses `env!("CARGO_MANIFEST_DIR")` before removing it. A shared cache is only safe between
+checkouts at the same path.
+

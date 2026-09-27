@@ -15,7 +15,7 @@ use reflex_policy::composer::{
 use reflex_policy::risk_defer::{RiskAbstentionPolicy, RiskDeferralConfig};
 use reflex_provider::AtomicEvidenceProvider;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
@@ -522,6 +522,24 @@ fn sweep_provenance(p: &SweepPoint, dataset: &str, provider: &str) -> String {
     )
 }
 
+/// Generates the two-dimensional calibration grid over `(tau_accept, quality_threshold)`.
+///
+/// Sweeps `tau_accept` from 0.20 to 0.56 inclusive in steps of 0.02 (19 values, all below
+/// the 0.58 small reasoner ceiling), and `quality_threshold` from 0.50 down to 0.20 inclusive
+/// in steps of 0.05 (7 values). Ordered with tau ascending and quality descending so that
+/// tie-breaking selects the lower tau and stricter quality threshold.
+fn calibration_grid() -> Vec<(f64, f64)> {
+    let mut grid = Vec::with_capacity(19 * 7);
+    for t_step in 0..19 {
+        let tau = ((0.20 + 0.02 * t_step as f64) * 100.0).round() / 100.0;
+        for q_step in 0..7 {
+            let quality = ((0.50 - 0.05 * q_step as f64) * 100.0).round() / 100.0;
+            grid.push((tau, quality));
+        }
+    }
+    grid
+}
+
 async fn run_calibration_phase(
     args: &ExperimentArgs,
 ) -> Result<SweepPoint, Box<dyn std::error::Error>> {
@@ -608,14 +626,7 @@ async fn run_calibration_phase(
     }
     println!(" Done!");
 
-    let candidate_settings = [
-        (0.25, 0.45),
-        (0.28, 0.42),
-        (0.28, 0.38),
-        (0.30, 0.38),
-        (0.32, 0.35),
-        (0.35, 0.35),
-    ];
+    let candidate_settings = calibration_grid();
 
     println!("\n┌────────────┬──────────────┬─────────────┬──────────┬──────────┬──────────────┬──────────────┐");
     println!("│ tau_accept │ QualityThresh│ FalseAccept │ Frontier Miss Rate │ Coverage │ FrontierAvoid│ Cost / Task  │");
@@ -782,6 +793,29 @@ async fn run_calibration_phase(
             }
         }
         println!("    {}", signals.join(", "));
+    }
+
+    println!(
+        "Signal diversity across {} calibration tasks (distinct values at 2 dp, min–max):",
+        dataset.tasks.len()
+    );
+    let mut all_signal_names = BTreeSet::new();
+    for ev in evidence_cache.values() {
+        for name in ev.semantic.keys() {
+            all_signal_names.insert(name.clone());
+        }
+    }
+    for name in &all_signal_names {
+        let mut values = BTreeSet::new();
+        for ev in evidence_cache.values() {
+            if let Some(val) = ev.get_prob(name) {
+                values.insert((val * 100.0).round() as i64);
+            }
+        }
+        let k = values.len();
+        let min = values.first().map(|&v| (v as f64) / 100.0).unwrap_or(0.0);
+        let max = values.last().map(|&v| (v as f64) / 100.0).unwrap_or(0.0);
+        println!("  {name}: {k} distinct, {min:.2}–{max:.2}");
     }
 
     Ok(selected)
@@ -2017,5 +2051,15 @@ mod tests {
             false,
         );
         assert!(!is_frontier_miss(&routed));
+    }
+
+    #[test]
+    fn test_calibration_grid_properties() {
+        let grid = calibration_grid();
+        assert_eq!(grid.len(), 133);
+        assert_eq!(grid.first(), Some(&(0.20, 0.50)));
+        assert_eq!(grid.last(), Some(&(0.56, 0.20)));
+        assert!(grid.iter().all(|&(tau, _)| tau < 0.58));
+        assert!(grid.windows(2).all(|w| w[0].0 <= w[1].0));
     }
 }

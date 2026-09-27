@@ -1,9 +1,9 @@
 {
   "winning_candidate": "Candidate E (Guarded Hybrid Architecture)",
-  "optimal_tau_accept": 0.25,
-  "clean_quality_accept_threshold": 0.45,
+  "optimal_tau_accept": 0.22,
+  "clean_quality_accept_threshold": 0.4,
   "max_risk_small_reasoner": 0.58,
   "mandatory_frontier_risk": 0.7,
-  "timestamp": "2026-09-27T11:59:14.513991+00:00",
-  "validation_notes": "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on fixtures/v2_eval_calibration.json with provider mock: 0 false accepts, 1/12 frontier misses, 70.0% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone."
+  "timestamp": "2026-09-27T18:28:16.606628+00:00",
+  "validation_notes": "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on fixtures/v2_eval_calibration.json with provider jev: 0 false accepts, 0/12 frontier misses, 70.0% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone."
 }

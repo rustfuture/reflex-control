@@ -153,5 +153,11 @@ fn every_split_keeps_the_intended_class_mix() {
                 actual.get(action)
             );
         }
+        let expected_total: usize = wanted.iter().map(|(_, count)| count).sum();
+        assert_eq!(
+            actual.values().sum::<usize>(),
+            expected_total,
+            "{split}: unexpected action labels present: {actual:?}"
+        );
     }
 }

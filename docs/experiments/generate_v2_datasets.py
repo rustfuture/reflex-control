@@ -467,6 +467,9 @@ def partition_templates():
             raise SystemExit(
                 f"{t_type}: need exactly {required} templates, pool has {len(pool)}"
             )
+        contexts = [template[0] for template in pool]
+        if len(set(contexts)) != len(contexts):
+            raise SystemExit(f"{t_type}: pool contains duplicate templates")
         shuffled = list(pool)
         random.shuffle(shuffled)
         cursor = 0

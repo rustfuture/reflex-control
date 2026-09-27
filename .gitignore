@@ -11,3 +11,10 @@ reflex.toml
 
 # Local agent planning notes (plan, review log, lessons)
 tasks/
+
+# Python & Notebook caches
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/

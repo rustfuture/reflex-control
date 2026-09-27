@@ -4,7 +4,7 @@
 [![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Architecture: Guarded Hybrid](https://img.shields.io/badge/architecture-guarded--hybrid-purple.svg)](docs/experiments/live_experiment_hybrid_results.md)
-[![Status: Evaluated](https://img.shields.io/badge/evaluation-frozen--v0.1-brightgreen.svg)](fixtures/README.md)
+[![Config: frozen 0.2.0](https://img.shields.io/badge/config-frozen--0.2.0-blue.svg)](fixtures/README.md)
 
 A deterministic, calibrated **System-1 control plane and policy engine** for AI agent runtimes. It arbitrates whether an agent execution step should continue, retry, accept autonomously, request local verification, or escalate to an expensive frontier reasoning model.
 
@@ -190,7 +190,7 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 | `fixtures/v2_eval_calibration.json` | Systematic grid sweep split for threshold calibration ($\tau_{\text{accept}}, \theta_{\text{clean}}$) | 40 tasks |
 | `fixtures/v2_eval_validation.json` | Architecture comparison split (Guarded Hybrid vs Deterministic Rules) | 30 tasks |
 | `fixtures/v2_eval_dev.json` | Development & connectivity smoke testing split | 30 tasks |
-| `fixtures/frozen_hybrid_config.json` | Frozen 0.2.0 policy parameters ($\tau_{\text{accept}} = 0.25, \theta_{\text{clean}} = 0.45, \text{risk}_{\text{frontier}} = 0.70$) | Config |
+| `fixtures/frozen_hybrid_config.json` | Frozen 0.2.0 policy parameters ($\tau_{\text{accept}} = 0.25, \theta_{\text{clean}} = 0.45, \text{risk}_{\text{frontier}} = 0.70$); fit with the mock provider | Config |
 
 ---
 

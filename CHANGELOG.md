@@ -6,10 +6,12 @@ All notable changes to Reflex Control are documented here.
 
 - Partitioned the v2 evaluation corpus into disjoint context slices so the evaluation partition is genuinely held out. Previously all four splits sampled one 34-template pool, and 30 of the 32 distinct contexts in the evaluation partition also appeared in another split.
 - Expanded the task template pool from 34 to 200 so each of the 200 records carries a unique context.
-- Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness, intra-split uniqueness, and the 200-context total in CI.
+- Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness, intra-split uniqueness, the 200-context total, and each split's class mix in CI.
 - Fixed the calibration sweep: it returned its seed values (0.28 / 0.38) because no grid point met its strict zero-error rule, and it printed "0 False Accepts, 0 frontier misses" as literal text. It now selects lexicographically (false accepts, frontier misses, coverage) and reports the selected point's measured counts, warning when it is not error-free.
 - Changed `reflex experiment --phase freeze`: with no thresholds it now runs the calibration sweep and freezes the selected point, recording the dataset, provider and measured counts in `validation_notes` (previously it silently wrote 0.28 / 0.38). With `--risk-threshold` and the new `--quality-threshold` it records a manual override; with only one of them it errors. Because `--provider` defaults to `jev`, a bare `--phase freeze` now calls the live API — pass `--provider mock` for an offline run.
-- Refit the frozen configuration on the held-out calibration partition: tau_accept 0.25, quality threshold 0.45.
+- Refit the frozen configuration with the calibration sweep on the disjoint calibration partition, using the mock provider: tau_accept 0.25, quality threshold 0.45. The move from 0.28 / 0.38 rests on a single false accept (1 vs 0 across 40 calibration tasks), and the thresholds are not calibrated against live Jev signals.
+- The generated evaluation report now names the dataset it evaluated and states that the partition is held out only for the CI-verified v2 partitions; the phase-4 banner no longer makes a held-out claim either way. `--phase all` now rejects `--dataset`, which made every phase read the same file.
+- CI now regenerates the v2 fixtures and fails if the committed files differ from the generator's output.
 
 ## 0.1.1 - 2026-09-23
 

@@ -1,14 +1,17 @@
 # Reflex Control
 
+Reflex Control is a calibrated System-1 control plane and policy engine for AI agent runtimes, arbitrating whether an execution step should accept autonomously, retry, verify locally, or escalate to a frontier reasoning model.
+
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
-[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Architecture: Guarded Hybrid](https://img.shields.io/badge/architecture-guarded--hybrid-purple.svg)](docs/experiments/live_experiment_hybrid_results.md)
-[![Config: frozen 0.3.0](https://img.shields.io/badge/config-frozen--0.3.0-blue.svg)](fixtures/README.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A deterministic, calibrated **System-1 control plane and policy engine** for AI agent runtimes. It arbitrates whether an agent execution step should continue, retry, accept autonomously, request local verification, or escalate to an expensive frontier reasoning model.
+**Status**: Research prototype (v0.3.0). Evaluated against curated synthetic benchmark fixtures and live TypeSafe Jev semantic signals; not validated for production multi-tenant agent workloads.
 
-Reflex Control couples zero-cost deterministic runtime checks (test suites, git diffs, execution bounds) with atomic semantic signals from [TypeSafe Jev](https://typesafe.ai). Inviolable safety rules strictly take precedence over model confidence: high-risk actions are vetoed regardless of predicted likelihood.
+- **Deterministic & Semantic Decision Gate**: Combines deterministic runtime checks (exit codes, test results, git diff volume) with atomic semantic signals (via [TypeSafe Jev](https://typesafe.ai) or local mock provider).
+- **Hard Safety Veto**: Overrides model confidence to enforce mandatory frontier escalation whenever high or critical risk actions (such as credential exposure or schema alterations) are detected.
+- **Threshold Calibration**: Includes grid sweep routines to tune acceptance thresholds ($\tau_{\text{accept}}$) and quality cutoffs ($\theta_{\text{clean}}$) over labeled task splits with statistical confidence intervals.
+- **Shadow Mode Telemetry**: Records orchestrator choices, Reflex shadow decisions, estimated costs, and latencies into SQLite without intercepting execution flow.
+- **Unified CLI Tooling**: Provides commands to run offline decision evaluations, execute calibration sweeps, evaluate datasets, and inspect telemetry.
 
 ```
                   ┌───────────────────────────────┐
@@ -25,7 +28,7 @@ Reflex Control couples zero-cost deterministic runtime checks (test suites, git 
                  └───────────────┬───────────────┘
                                  ▼
               ┌─────────────────────────────────────┐
-              │  Layer 1: Inviolable Hard Veto Gate │
+              │  Layer 1: Hard Safety Veto Gate     │
               │  (Critical risk / privilege bypass) │
               └──────────────┬───────────────┬──────┘
                    Veto Path │               │ Passed Safety
@@ -35,16 +38,6 @@ Reflex Control couples zero-cost deterministic runtime checks (test suites, git 
                  │ Reasoner Escalation│ │ (Accept, Retry, Small Reasoner)   │
                  └──────────────────┘  └───────────────────────────────────┘
 ```
-
----
-
-## Key Capabilities
-
-- **Guarded Hybrid Decision Architecture**: Combines deterministic invariants with narrow, model-evaluated atomic propositions.
-- **Hard Safety Veto**: Applies configured risk and evidence rules before confidence-based acceptance; see the policy code and examples for the implemented behavior.
-- **Threshold Calibration**: Includes tools for measuring decision metrics and estimating confidence intervals on labeled outcomes.
-- **Shadow Mode Telemetry**: Records predictions beside an orchestrator's action in SQLite; the included example uses a mock provider and an in-memory database.
-- **Curated Evaluation Fixtures**: Includes a seeded synthetic-data generator and frozen policy configuration. These fixtures do not establish production reliability.
 
 ---
 
@@ -68,40 +61,47 @@ The repository is organized as a clean Cargo workspace separating core abstracti
 
 Rust **1.88** or newer is required.
 
-### 1. Installation & CLI Initialization
+### 1. Build
 
 ```bash
 # Clone the repository
 git clone https://github.com/rustfuture/reflex-control.git
 cd reflex-control
 
-# Build and install the CLI
-cargo install --path crates/reflex-cli
-
-# Initialize local state (creates reflex.db)
-reflex init
+# Build the workspace
+cargo build --workspace
 ```
 
-### 2. Evaluating a Decision (Local Mock Mode)
+### 2. Run Offline Demos & Local Mock Execution
 
-Local mock mode runs deterministically without network calls or credentials:
+Evaluate decisions deterministically without external credentials or network calls:
 
 ```bash
-reflex run --provider mock \
+# Run the verifier gate demo
+cargo run --bin reflex -- demo verifier-gate
+
+# Evaluate an individual task decision using the local mock provider
+cargo run --bin reflex -- run --provider mock \
   --context "Check whether this worker patch is safe" \
   --risk low
+
+# Run shadow mode on the benchmark fixture
+cargo run --bin reflex -- shadow run
+
+# Run Pareto frontier cost vs risk sweep
+cargo run --bin reflex -- pareto
 ```
 
-The output includes the selected action, confidence, and telemetry record. Identifiers and measured latency vary between runs.
+The CLI can also be installed to your cargo path via `cargo install --path crates/reflex-cli`, after which commands can be called directly as `reflex <subcommand>`.
 
-### 3. Using Live TypeSafe Jev
+### 3. Using Live TypeSafe Jev (Optional)
 
 To evaluate tasks against live atomic semantic signals, set `JEV_API_KEY`:
 
 ```bash
 export JEV_API_KEY="your_api_key_here"
 
-reflex run --provider jev \
+cargo run --bin reflex -- run --provider jev \
   --context "Add docstrings and verify the test suite" \
   --risk low
 ```
@@ -114,7 +114,7 @@ The repository includes standalone runnable examples under [`examples/`](example
 
 ### Verifier Gate Example
 
-Demonstrates both autonomous acceptance of safe tasks and the inviolable safety veto against dangerous modifications (even when model confidence is high):
+Demonstrates both autonomous acceptance of safe tasks and hard safety veto rules against dangerous modifications (even when model confidence is high):
 
 ```bash
 cargo run -p example-verifier-gate
@@ -161,7 +161,8 @@ cargo run -p example-shadow-mode
 
 ---
 
-## Evaluation Evidence & Historical Results
+<a id="evaluation-benchmark--measured-results"></a>
+## Evaluation Benchmark / Measured Results
 
 **Live held-out result (0.3.0).** With thresholds frozen from a live-Jev calibration sweep (tau_accept 0.22, quality threshold 0.40, selected on the 40-task calibration partition), Candidate E was evaluated once with live Jev signals on the 100-task held-out partition: 0/43 false accepts among autonomous accepts and terminations, 0/31 missed frontier-required tasks, 1/69 unnecessary frontier calls, 66.0% autonomous action coverage, and 68.0% of frontier calls avoided. The generated report is committed as [`docs/experiments/live_heldout_results.md`](docs/experiments/live_heldout_results.md). Approximate two-sided 95% Wilson intervals are 0%–8.2% for 0/43 false accepts, 0%–11.0% for 0/31 frontier misses, 0.3%–7.8% for 1/69 unnecessary frontier calls, and 56.3%–74.5% for 66/100 autonomous actions. Live Jev signals vary slightly between calls: repeated calibration sweeps differed by one task in coverage at some grid points while selecting the same operating point, so a re-run can move these counts by a task or two. This is a single run on curated synthetic data, not production validation, and per-task predictions are not retained.
 
@@ -196,6 +197,15 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 
 ---
 
+## Scope and Limitations
+
+- **Curated Synthetic Benchmark Fixtures**: Fixture datasets in [`fixtures/`](fixtures/) are synthetic scenarios generated via `docs/experiments/generate_v2_datasets.py` with fixed random seeds. They establish held-out split disjointness and threshold behavior under controlled conditions, not generalization to arbitrary production multi-tenant agent workloads.
+- **Provider Differences**: Offline evaluation via `--provider mock` uses deterministic heuristics and does not evaluate prompt language or contextual semantics. Live semantic evaluations require the TypeSafe Jev API (`JEV_API_KEY`), which introduces external network latency and minor sampling variation between runs.
+- **Zero Observed Errors vs. Risk**: Zero observed false accepts or frontier misses on a 40-task or 100-task split indicate that no errors occurred in that sample, but statistical confidence bounds (e.g., Wilson intervals up to 8.2%–11.0%) reflect sample-size limits; zero observed errors do not establish zero risk.
+- **Cost and Latency Estimates**: Dollar savings and latency figures in demonstrations and synthetic benchmarks are calculated against assumed baseline costs ($0.02 / 1,800 ms per frontier call), not measured production bills.
+
+---
+
 ## Development & Testing
 
 Run the full verification suite locally:
@@ -208,7 +218,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Run all workspace unit and integration tests
-cargo test --workspace
+cargo test --workspace --all-targets
 
 # Run interactive demo via CLI
 cargo run -p reflex-cli -- demo verifier-gate

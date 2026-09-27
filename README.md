@@ -1,63 +1,19 @@
 # Reflex Control
 
-Reflex Control is a calibrated System-1 control plane and policy engine for AI agent runtimes, arbitrating whether an execution step should accept autonomously, retry, verify locally, or escalate to a frontier reasoning model.
+Reflex Control decides whether an AI task can finish on its own, retry, or escalate to an expensive reasoning model.
 
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status**: Research prototype (v0.3.0). Evaluated against curated synthetic benchmark fixtures and live TypeSafe Jev semantic signals; not validated for production multi-tenant agent workloads.
+**Status:** Research prototype (v0.3.0). Tested on synthetic fixtures; not production-validated.
 
-- **Deterministic & Semantic Decision Gate**: Combines deterministic runtime checks (exit codes, test results, git diff volume) with atomic semantic signals (via [TypeSafe Jev](https://typesafe.ai) or local mock provider).
-- **Hard Safety Veto**: Overrides model confidence to enforce mandatory frontier escalation whenever high or critical risk actions (such as credential exposure or schema alterations) are detected.
-- **Threshold Calibration**: Includes grid sweep routines to tune acceptance thresholds ($\tau_{\text{accept}}$) and quality cutoffs ($\theta_{\text{clean}}$) over labeled task splits with statistical confidence intervals.
-- **Shadow Mode Telemetry**: Records orchestrator choices, Reflex shadow decisions, estimated costs, and latencies into SQLite without intercepting execution flow.
-- **Unified CLI Tooling**: Provides commands to run offline decision evaluations, execute calibration sweeps, evaluate datasets, and inspect telemetry.
+- Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
+- Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
+- Tunes acceptance thresholds across labeled tasks with statistical confidence intervals.
+- Logs runtime choices, shadow decisions, costs, and latencies to SQLite without blocking execution.
+- Includes a CLI to evaluate tasks offline, run calibration sweeps, and inspect telemetry.
 
-```
-                  ┌───────────────────────────────┐
-                  │    Agent Execution / Task     │
-                  └──────────────┬────────────────┘
-                                 │
-                 ┌───────────────┴───────────────┐
-                 ▼                               ▼
-       [Deterministic Checks]          [Atomic Semantic Signals]
-        - Exit codes & tests            - Scoped Jev evaluation
-        - Changed files & blast radius  - Safety & vulnerability probes
-        - Retry budgets & loop counters - Objective completion signals
-                 │                               │
-                 └───────────────┬───────────────┘
-                                 ▼
-              ┌─────────────────────────────────────┐
-              │  Layer 1: Hard Safety Veto Gate     │
-              │  (Critical risk / privilege bypass) │
-              └──────────────┬───────────────┬──────┘
-                   Veto Path │               │ Passed Safety
-                             ▼               ▼
-                 ┌──────────────────┐  ┌───────────────────────────────────┐
-                 │ Mandatory Frontier│  │ Layer 2: Calibrated Decision Gate │
-                 │ Reasoner Escalation│ │ (Accept, Retry, Small Reasoner)   │
-                 └──────────────────┘  └───────────────────────────────────┘
-```
-
----
-
-## Workspace Architecture
-
-The repository is organized as a clean Cargo workspace separating core abstractions from providers, policies, and tooling:
-
-| Crate | Path | Responsibility |
-| :--- | :--- | :--- |
-| `reflex-core` | [`crates/reflex-core`](crates/reflex-core) | Core data models, task contexts, evidence vectors, decision action enums. |
-| `reflex-provider` | [`crates/reflex-provider`](crates/reflex-provider) | Provider traits and local mock/synthetic implementations for zero-dependency runs. |
-| `reflex-jev` | [`crates/reflex-jev`](crates/reflex-jev) | TypeSafe Jev API integration for atomic semantic signal extraction. |
-| `reflex-policy` | [`crates/reflex-policy`](crates/reflex-policy) | Guarded Hybrid policy implementation, safety veto rules, and acceptance thresholds. |
-| `reflex-telemetry` | [`crates/reflex-telemetry`](crates/reflex-telemetry) | SQLite-backed decision persistence, shadow-mode evaluation logs, cost and latency tracking. |
-| `reflex-calibration` | [`crates/reflex-calibration`](crates/reflex-calibration) | Grid sweep routines for policy calibration, threshold optimization, and Pareto frontier generation. |
-| `reflex-cli` | [`crates/reflex-cli`](crates/reflex-cli) | Unified CLI tool (`reflex`) for execution, benchmarks, shadow mode, and demos. |
-
----
-
-## Quick Start
+## Quick start
 
 Rust **1.88** or newer is required.
 
@@ -96,7 +52,7 @@ The CLI can also be installed to your cargo path via `cargo install --path crate
 
 ### 3. Using Live TypeSafe Jev (Optional)
 
-To evaluate tasks against live atomic semantic signals, set `JEV_API_KEY`:
+To evaluate tasks against live semantic signals using [TypeSafe Jev](https://typesafe.ai) (an API that scores task quality and safety), set `JEV_API_KEY`:
 
 ```bash
 export JEV_API_KEY="your_api_key_here"
@@ -105,6 +61,34 @@ cargo run --bin reflex -- run --provider jev \
   --context "Add docstrings and verify the test suite" \
   --risk low
 ```
+
+---
+
+## How it works
+
+Reflex Control evaluates agent execution steps through a multi-layer decision pipeline:
+
+- The engine collects deterministic signals (exit codes, test outcomes, changed files) and semantic signals (task completion, security risk, scope drift).
+- A hard safety veto immediately escalates to a frontier model (a high-capability reasoning model) if the task modifies sensitive files, introduces security hazards, or exhausts retries.
+- Transient errors with remaining retry budget trigger an autonomous retry rather than an expensive model call.
+- Safe steps pass to a calibrated scoring gate that evaluates composite task quality against tuned thresholds.
+- Steps meeting the quality threshold finish autonomously (`Accept` or `Terminate`), avoiding unnecessary calls to larger models.
+
+---
+
+## Workspace Architecture
+
+The repository is organized as a Cargo workspace separating core abstractions from providers, policies, and tooling (see execution diagram in [`docs/architecture.md`](docs/architecture.md)):
+
+| Crate | Path | Responsibility |
+| :--- | :--- | :--- |
+| `reflex-core` | [`crates/reflex-core`](crates/reflex-core) | Core data models, task contexts, evidence vectors, decision action enums. |
+| `reflex-provider` | [`crates/reflex-provider`](crates/reflex-provider) | Provider traits and local mock/synthetic implementations for zero-dependency runs. |
+| `reflex-jev` | [`crates/reflex-jev`](crates/reflex-jev) | TypeSafe Jev API integration for atomic semantic signal extraction. |
+| `reflex-policy` | [`crates/reflex-policy`](crates/reflex-policy) | Guarded Hybrid policy implementation, safety veto rules, and acceptance thresholds. |
+| `reflex-telemetry` | [`crates/reflex-telemetry`](crates/reflex-telemetry) | SQLite-backed decision persistence, shadow-mode evaluation logs, cost and latency tracking. |
+| `reflex-calibration` | [`crates/reflex-calibration`](crates/reflex-calibration) | Grid sweep routines for policy calibration, threshold optimization, and Pareto frontier generation. |
+| `reflex-cli` | [`crates/reflex-cli`](crates/reflex-cli) | Unified CLI tool (`reflex`) for execution, benchmarks, shadow mode, and demos. |
 
 ---
 
@@ -166,20 +150,7 @@ cargo run -p example-shadow-mode
 
 **Live held-out result (0.3.0).** With thresholds frozen from a live-Jev calibration sweep (tau_accept 0.22, quality threshold 0.40, selected on the 40-task calibration partition), Candidate E was evaluated once with live Jev signals on the 100-task held-out partition: 0/43 false accepts among autonomous accepts and terminations, 0/31 missed frontier-required tasks, 1/69 unnecessary frontier calls, 66.0% autonomous action coverage, and 68.0% of frontier calls avoided. The generated report is committed as [`docs/experiments/live_heldout_results.md`](docs/experiments/live_heldout_results.md). Approximate two-sided 95% Wilson intervals are 0%–8.2% for 0/43 false accepts, 0%–11.0% for 0/31 frontier misses, 0.3%–7.8% for 1/69 unnecessary frontier calls, and 56.3%–74.5% for 66/100 autonomous actions. Live Jev signals vary slightly between calls: repeated calibration sweeps differed by one task in coverage at some grid points while selecting the same operating point, so a re-run can move these counts by a task or two. This is a single run on curated synthetic data, not production validation, and per-task predictions are not retained.
 
-The repository preserves historical Candidate E aggregates in [`docs/experiments/live_experiment_hybrid_results.md`](docs/experiments/live_experiment_hybrid_results.md). The report records 69/100 autonomous actions and 69/100 frontier calls avoided, plus 0/31 missed frontier-required tasks and 0/69 unnecessary frontier calls. These are historical aggregate claims: task-level predictions and the run manifest were not retained, so the counts cannot be independently reproduced from this checkout.
-
-The historical run used the pre-0.2.0 version of this fixture, which held only 32 distinct task contexts, 30 of which also appeared in the development, validation, or calibration splits, so those aggregates were not measured on held-out data. Since 0.2.0 the evaluation partition shares no context with any other split (enforced in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), and the live held-out result above is the current measurement on it. The report records live Jev inference, but its outputs and exact run identity are unavailable for verification. This is curated synthetic evidence, not production validation.
-
-The reported counts have approximate two-sided 95% Wilson intervals of 59.4%–77.2% for 69/100 autonomous actions, 0%–10.9% for 0/31 frontier misses, and 0%–5.3% for 0/69 unnecessary frontier calls. These bounds describe the reported sample counts only; zero observed events do not establish zero risk.
-
-### Metric contract
-
-- **Resolved outcome** in telemetry/calibration metrics means an explicit `Success` or `Failure`. `Partial`, `Unknown`, and missing outcomes are shown separately and excluded from outcome-based risk, calibration, and optimizer metrics.
-- **Telemetry FAR** is false accepts divided by resolved decisions whose recorded action is autonomous `Accept`/`Terminate`. **Threshold-evaluation FAR** uses a candidate policy cohort: `Terminate`, plus eligible `Accept`/`Verify` decisions at or above the candidate confidence threshold; its numerator and denominator exclude unresolved outcomes. Candidate E's experiment FAR instead divides tasks labeled `is_unsafe_to_accept` and predicted `Accept`/`Terminate` by all predicted `Accept`/`Terminate` tasks; it depends on those labels, not a recorded execution outcome.
-- **Frontier miss rate** in the Candidate E experiment is missed frontier-required tasks divided by all tasks labeled frontier-required. It is a routing metric, not a general defect-leakage rate.
-- **Unnecessary frontier-call rate** in the Candidate E experiment is frontier-routed tasks labeled non-frontier divided by all tasks labeled non-frontier.
-- **Autonomous action coverage** in Candidate E is `Accept`/`Terminate`/`Retry`/`Continue` actions divided by all tasks. **Frontier calls avoided** is tasks without a frontier call divided by all tasks. The two happened to have the same reported count but are calculated independently.
-- Any rate with a zero denominator is reported as unavailable; a zero count alone is not a zero risk estimate.
+Historical Candidate E aggregates, partition history, and metric definitions are documented in [`docs/evaluation.md`](docs/evaluation.md).
 
 ---
 
@@ -199,30 +170,20 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 
 ## Scope and Limitations
 
-- **Curated Synthetic Benchmark Fixtures**: Fixture datasets in [`fixtures/`](fixtures/) are synthetic scenarios generated via `docs/experiments/generate_v2_datasets.py` with fixed random seeds. They establish held-out split disjointness and threshold behavior under controlled conditions, not generalization to arbitrary production multi-tenant agent workloads.
-- **Provider Differences**: Offline evaluation via `--provider mock` uses deterministic heuristics and does not evaluate prompt language or contextual semantics. Live semantic evaluations require the TypeSafe Jev API (`JEV_API_KEY`), which introduces external network latency and minor sampling variation between runs.
-- **Zero Observed Errors vs. Risk**: Zero observed false accepts or frontier misses on a 40-task or 100-task split indicate that no errors occurred in that sample, but statistical confidence bounds (e.g., Wilson intervals up to 8.2%–11.0%) reflect sample-size limits; zero observed errors do not establish zero risk.
-- **Cost and Latency Estimates**: Dollar savings and latency figures in demonstrations and synthetic benchmarks are calculated against assumed baseline costs ($0.02 / 1,800 ms per frontier call), not measured production bills.
+- **Synthetic fixtures:** Fixture datasets in [`fixtures/`](fixtures/) are synthetic scenarios generated via `docs/experiments/generate_v2_datasets.py` with fixed random seeds. They establish held-out split disjointness and threshold behavior under controlled conditions, not generalization to arbitrary production multi-tenant agent workloads.
+- **Provider differences:** Offline evaluation via `--provider mock` uses deterministic heuristics and does not evaluate prompt language or contextual semantics. Live semantic evaluations require the TypeSafe Jev API (`JEV_API_KEY`), which introduces external network latency and minor sampling variation between runs.
+- **Statistical bounds:** Zero observed false accepts or frontier misses on a 40-task or 100-task split indicate that no errors occurred in that sample, but statistical confidence bounds (e.g., Wilson intervals up to 8.2%–11.0%) reflect sample-size limits; zero observed errors do not establish zero risk.
+- **Cost estimates:** Dollar savings and latency figures in demonstrations and synthetic benchmarks are calculated against assumed baseline costs ($0.02 / 1,800 ms per frontier call), not measured production bills.
 
 ---
 
-## Development & Testing
-
-Run the full verification suite locally:
+## Tests
 
 ```bash
-# Code formatting check
-cargo fmt --all -- --check
-
-# Strict workspace clippy
-cargo clippy --workspace --all-targets -- -D warnings
-
-# Run all workspace unit and integration tests
 cargo test --workspace --all-targets
-
-# Run interactive demo via CLI
-cargo run -p reflex-cli -- demo verifier-gate
 ```
+
+The test suite covers decision logic, security veto rules, threshold calibration, telemetry persistence, API integrations, and fixture split integrity.
 
 ---
 

@@ -225,8 +225,8 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
             );
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
-            let (winning_tau, winning_quality) = run_calibration_phase(&args).await?;
-            freeze_configuration(winning_tau, winning_quality)?;
+            let selected = run_calibration_phase(&args).await?;
+            freeze_configuration(selected.tau, selected.quality)?;
             run_evaluation_phase(&args).await?;
         }
         other => {
@@ -470,9 +470,45 @@ async fn run_validation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
 // 3. CALIBRATION PHASE (OPTIMIZE TAU_ACCEPT & QUALITY THRESHOLD)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One evaluated point of the calibration grid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SweepPoint {
+    tau: f64,
+    quality: f64,
+    false_accepts: usize,
+    frontier_misses: usize,
+    frontier_required: usize,
+    coverage_pct: f64,
+}
+
+/// Picks the operating point lexicographically: fewest false accepts, then fewest
+/// frontier misses, then highest autonomous coverage. Exact ties keep the earlier grid
+/// point. `None` only for an empty grid — there is no default to fall back to here.
+fn select_operating_point(points: &[SweepPoint]) -> Option<SweepPoint> {
+    points.iter().copied().min_by(|a, b| {
+        (a.false_accepts, a.frontier_misses)
+            .cmp(&(b.false_accepts, b.frontier_misses))
+            .then_with(|| b.coverage_pct.total_cmp(&a.coverage_pct))
+    })
+}
+
+/// Reports the selected point from its measured values only.
+fn describe_operating_point(p: &SweepPoint) -> String {
+    let mut report = format!(
+        ">>> Selected Operating Point: tau_accept = {:.2}, quality_thresh = {:.2} ({} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage)",
+        p.tau, p.quality, p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
+    );
+    if p.false_accepts > 0 || p.frontier_misses > 0 {
+        report.push_str(
+            "\n>>> WARNING: no grid point reached zero false accepts and zero frontier misses; this is the least-bad point by (false accepts, frontier misses, coverage).",
+        );
+    }
+    report
+}
+
 async fn run_calibration_phase(
     args: &ExperimentArgs,
-) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+) -> Result<SweepPoint, Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
     println!(" PHASE 3: CALIBRATION SET (40 tasks) - THRESHOLD OPTIMIZATION");
     println!("==========================================================================");
@@ -569,9 +605,7 @@ async fn run_calibration_phase(
     println!("│ tau_accept │ QualityThresh│ FalseAccept │ Frontier Miss Rate │ Coverage │ FrontierAvoid│ Cost / Task  │");
     println!("├────────────┼──────────────┼─────────────┼──────────┼──────────┼──────────────┼──────────────┤");
 
-    let mut best_tau = 0.28;
-    let mut best_quality = 0.38;
-    let mut best_coverage = 0.0;
+    let mut points = Vec::with_capacity(candidate_settings.len());
 
     for &(tau, q_thresh) in &candidate_settings {
         let hybrid_config = GuardedHybridConfig {
@@ -633,23 +667,21 @@ async fn run_calibration_phase(
             m.avg_cost_per_task
         );
 
-        // Strict requirement: zero observed false accepts and frontier misses.
-        if m.false_accept_count == 0
-            && m.frontier_miss_rate == Some(0.0)
-            && m.autonomous_coverage_pct >= best_coverage
-        {
-            best_tau = tau;
-            best_quality = q_thresh;
-            best_coverage = m.autonomous_coverage_pct;
-        }
+        points.push(SweepPoint {
+            tau,
+            quality: q_thresh,
+            false_accepts: m.false_accept_count,
+            frontier_misses: m.frontier_missed_count,
+            frontier_required: m.frontier_required_tasks,
+            coverage_pct: m.autonomous_coverage_pct,
+        });
     }
     println!("└────────────┴──────────────┴─────────────┴──────────┴──────────┴──────────────┴──────────────┘");
 
-    println!(
-        "\n>>> Best Observed Operating Point: tau_accept = {best_tau:.2}, quality_thresh = {best_quality:.2} (0 False Accepts, 0 frontier misses, {best_coverage:.1}% autonomous action coverage)"
-    );
+    let selected = select_operating_point(&points).ok_or("calibration grid is empty")?;
+    println!("\n{}", describe_operating_point(&selected));
 
-    Ok((best_tau, best_quality))
+    Ok(selected)
 }
 
 fn freeze_configuration(
@@ -663,7 +695,7 @@ fn freeze_configuration(
         max_risk_small_reasoner: 0.58,
         mandatory_frontier_risk: 0.70,
         timestamp: Utc::now().to_rfc3339(),
-        validation_notes: "Parameters selected by the calibration sweep. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
+        validation_notes: "Parameters selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
     };
 
     let path = "fixtures/frozen_hybrid_config.json";
@@ -1591,5 +1623,73 @@ mod tests {
         assert_eq!(metrics.frontier_miss_ci.sample_size, 0);
         assert_eq!(metrics.unnecessary_frontier_call_ci.sample_size, 0);
         assert_eq!(format_rate_pct(metrics.frontier_miss_rate), "N/A");
+    }
+
+    fn point(
+        tau: f64,
+        false_accepts: usize,
+        frontier_misses: usize,
+        coverage_pct: f64,
+    ) -> SweepPoint {
+        SweepPoint {
+            tau,
+            quality: 0.40,
+            false_accepts,
+            frontier_misses,
+            frontier_required: 12,
+            coverage_pct,
+        }
+    }
+
+    #[test]
+    fn selection_prefers_fewer_false_accepts_over_coverage() {
+        let risky = point(0.30, 1, 0, 90.0);
+        let safe = point(0.25, 0, 1, 50.0);
+        assert_eq!(select_operating_point(&[risky, safe]), Some(safe));
+    }
+
+    #[test]
+    fn selection_breaks_false_accept_ties_on_frontier_misses() {
+        let more_misses = point(0.30, 0, 2, 90.0);
+        let fewer_misses = point(0.25, 0, 1, 60.0);
+        assert_eq!(
+            select_operating_point(&[more_misses, fewer_misses]),
+            Some(fewer_misses)
+        );
+    }
+
+    #[test]
+    fn selection_breaks_error_ties_on_coverage() {
+        let lower = point(0.25, 0, 1, 60.0);
+        let higher = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[lower, higher]), Some(higher));
+    }
+
+    #[test]
+    fn selection_keeps_the_earlier_grid_point_on_an_exact_tie() {
+        let first = point(0.25, 0, 1, 70.0);
+        let second = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[first, second]), Some(first));
+    }
+
+    #[test]
+    fn selection_on_an_empty_grid_is_none() {
+        assert_eq!(select_operating_point(&[]), None);
+    }
+
+    #[test]
+    fn report_prints_measured_errors_and_warns_when_not_error_free() {
+        let report = describe_operating_point(&point(0.25, 2, 1, 70.0));
+        assert!(report.contains("2 false accepts"), "{report}");
+        assert!(report.contains("1/12 frontier misses"), "{report}");
+        assert!(report.contains("WARNING"), "{report}");
+    }
+
+    #[test]
+    fn report_does_not_warn_for_an_error_free_point() {
+        let report = describe_operating_point(&point(0.25, 0, 0, 70.0));
+        assert!(report.contains("0 false accepts"), "{report}");
+        assert!(report.contains("0/12 frontier misses"), "{report}");
+        assert!(!report.contains("WARNING"), "{report}");
     }
 }

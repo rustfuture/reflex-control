@@ -754,13 +754,16 @@ async fn freeze_from_sweep(args: &ExperimentArgs) -> Result<(), Box<dyn std::err
 // 4. EVALUATION PHASE (LEGACY `blind` NAME)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Fallback thresholds used when no frozen configuration exists. Not calibrated.
+const DEFAULT_EVAL_THRESHOLDS: (f64, f64) = (0.28, 0.38);
+
 async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
     println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS)");
     println!("==========================================================================");
 
     let frozen_file = "fixtures/frozen_hybrid_config.json";
-    let (frozen_tau, frozen_quality) = if Path::new(frozen_file).exists() {
+    let (frozen_cfg, frozen_tau, frozen_quality) = if Path::new(frozen_file).exists() {
         let content = fs::read_to_string(frozen_file)?;
         let parsed: FrozenExperimentConfig = serde_json::from_str(&content)?;
         println!("Loaded FROZEN configuration from {frozen_file}:");
@@ -770,12 +773,11 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
             "  quality_thresh:  {:.2}",
             parsed.clean_quality_accept_threshold
         );
-        (
-            parsed.optimal_tau_accept,
-            parsed.clean_quality_accept_threshold,
-        )
+        let tau = parsed.optimal_tau_accept;
+        let quality = parsed.clean_quality_accept_threshold;
+        (Some(parsed), tau, quality)
     } else {
-        (0.28, 0.38)
+        (None, DEFAULT_EVAL_THRESHOLDS.0, DEFAULT_EVAL_THRESHOLDS.1)
     };
 
     let tau_accept = args.risk_threshold.unwrap_or(frozen_tau);
@@ -1079,11 +1081,13 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     print_comparison_table(&[ma.clone(), mb.clone(), mc.clone(), me.clone()]);
 
     let verified_held_out = args.dataset.is_none() && args.version != "v1";
+    let frozen_note = frozen_config_note(frozen_cfg.as_ref(), tau_accept, quality_thresh);
     save_markdown_artifact(
         &[ma, mb, mc, me],
         &args.provider,
         &evaluation_file,
         verified_held_out,
+        &frozen_note,
     )?;
 
     Ok(())
@@ -1452,11 +1456,48 @@ fn evaluation_data_note(path: &str, verified_held_out: bool) -> String {
     }
 }
 
+/// What the generated report may truthfully say about where its thresholds came from.
+/// Built-in defaults are uncalibrated; frozen configs record calibration provenance.
+fn frozen_config_note(
+    frozen: Option<&FrozenExperimentConfig>,
+    tau_used: f64,
+    quality_used: f64,
+) -> String {
+    let (base_tau, mut note) = match frozen {
+        Some(cfg) => (
+            cfg.optimal_tau_accept,
+            format!(
+                "Loaded from `fixtures/frozen_hybrid_config.json` (frozen {}): tau_accept {:.2}, quality_thresh {:.2}. Freeze record: {}",
+                cfg.timestamp, cfg.optimal_tau_accept, quality_used, cfg.validation_notes
+            ),
+        ),
+        None => (
+            DEFAULT_EVAL_THRESHOLDS.0,
+            format!(
+                "No frozen configuration was found at `fixtures/frozen_hybrid_config.json`; the built-in defaults were used (tau_accept {:.2}, quality_thresh {:.2}). These defaults were not selected by a calibration sweep.",
+                DEFAULT_EVAL_THRESHOLDS.0, quality_used
+            ),
+        ),
+    };
+
+    if (tau_used - base_tau).abs() > 1e-9 {
+        if !note.ends_with('.') {
+            note.push('.');
+        }
+        note.push_str(&format!(
+            " `tau_accept` was overridden to {tau_used:.2} via `--risk-threshold`, so the evaluated tau differs from the value above."
+        ));
+    }
+
+    note
+}
+
 fn save_markdown_artifact(
     metrics: &[CandidateSummaryMetrics],
     provider: &str,
     eval_path: &str,
     verified_held_out: bool,
+    frozen_note: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut md = String::new();
     md.push_str("# Reflex Control: Guarded Hybrid Architecture Empirical Benchmark\n\n");
@@ -1466,6 +1507,7 @@ fn save_markdown_artifact(
         "> This is a generated experimental report, not production validation. {} Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
         evaluation_data_note(eval_path, verified_held_out)
     ));
+    md.push_str(&format!("**Thresholds**: {frozen_note}\n\n"));
     md.push_str("### 1. Comparative Performance Matrix\n\n");
     md.push_str("| Metric ");
     for m in metrics {
@@ -1792,5 +1834,58 @@ mod tests {
             !unverified.contains("shares no task context"),
             "{unverified}"
         );
+    }
+
+    #[test]
+    fn frozen_config_note_reports_provenance_for_frozen_config() {
+        let cfg = FrozenExperimentConfig {
+            winning_candidate: "Candidate E (Guarded Hybrid Architecture)".to_string(),
+            optimal_tau_accept: 0.25,
+            clean_quality_accept_threshold: 0.45,
+            max_risk_small_reasoner: 0.58,
+            mandatory_frontier_risk: 0.70,
+            timestamp: "2026-09-27T11:59:14.513991+00:00".to_string(),
+            validation_notes:
+                "Selected by the calibration sweep: 0 false accepts, 1/12 frontier misses."
+                    .to_string(),
+        };
+        let note = frozen_config_note(Some(&cfg), 0.25, 0.45);
+        assert!(note.contains(&cfg.timestamp), "{note}");
+        assert!(note.contains("0.25"), "{note}");
+        assert!(note.contains("0.45"), "{note}");
+        assert!(note.contains(&cfg.validation_notes), "{note}");
+        assert!(!note.contains("overridden"), "{note}");
+        assert!(!note.contains("quoted verbatim"), "{note}");
+    }
+
+    #[test]
+    fn frozen_config_note_reports_defaults_when_frozen_file_missing() {
+        let note = frozen_config_note(None, DEFAULT_EVAL_THRESHOLDS.0, DEFAULT_EVAL_THRESHOLDS.1);
+        assert!(note.contains("default"), "{note}");
+        assert!(
+            note.contains("not selected by a calibration sweep"),
+            "{note}"
+        );
+        assert!(note.contains("0.28"), "{note}");
+        assert!(note.contains("0.38"), "{note}");
+        assert!(!note.contains("overridden"), "{note}");
+    }
+
+    #[test]
+    fn frozen_config_note_reports_override_when_tau_differs() {
+        let cfg = FrozenExperimentConfig {
+            winning_candidate: "Candidate E (Guarded Hybrid Architecture)".to_string(),
+            optimal_tau_accept: 0.25,
+            clean_quality_accept_threshold: 0.45,
+            max_risk_small_reasoner: 0.58,
+            mandatory_frontier_risk: 0.70,
+            timestamp: "2026-09-27T11:59:14.513991+00:00".to_string(),
+            validation_notes:
+                "Selected by the calibration sweep: 0 false accepts, 1/12 frontier misses."
+                    .to_string(),
+        };
+        let note = frozen_config_note(Some(&cfg), 0.30, 0.45);
+        assert!(note.contains("overridden"), "{note}");
+        assert!(note.contains("0.30"), "{note}");
     }
 }

@@ -2,6 +2,10 @@
 
 All notable changes to Reflex Control are documented here.
 
+## Unreleased
+
+- Surfaced threshold freeze provenance in the generated evaluation report: the report now states whether thresholds were loaded from `fixtures/frozen_hybrid_config.json` (recording freeze timestamp, threshold values, and the calibration sweep's validation notes quoted verbatim) or fell back to built-in defaults (recording that they are not from a calibration sweep), and explicitly notes when `tau_accept` was overridden via `--risk-threshold`.
+
 ## 0.2.0 - 2026-09-27
 
 - Partitioned the v2 evaluation corpus into disjoint context slices so the evaluation partition is genuinely held out. Previously all four splits sampled one 34-template pool, and 30 of the 32 distinct contexts in the evaluation partition also appeared in another split.

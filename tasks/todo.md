@@ -56,8 +56,11 @@ they must be one commit or `main` goes red.
 | :--- | :--- | :--- |
 | A | 3 | Additive content only; independently green |
 | B | 1 + 2 + 4 | Test, generator fix and regenerated data must land together |
-| C | 5 | Depends on B's corpus |
-| D | 6 | Documents the outcome of B and C |
+| C | 5 Steps 1-2 | Freeze-step wiring; done in `c22b1ce` |
+| C′ | 5A | Selection rule + honest report; must land before the sweep result is trusted |
+| C″ | 5 Steps 3-6 | Runs the fixed sweep on B's corpus and freezes its result |
+| D | 6 | Documents the outcome of B, 5A and C″ |
+| E | 7 | Publish: needs D committed and the full gate green |
 
 ## Required Template Pool Sizes
 
@@ -87,7 +90,8 @@ Current pools: clean 14, transient 5, continue 4, security 6, ambiguity 3, hard_
 | `crates/reflex-calibration/Cargo.toml` | Add `[dev-dependencies]` so the integration test can use serde | Modify |
 | `docs/experiments/generate_v2_datasets.py` | Disjoint partitioning + expanded pools | Modify |
 | `fixtures/v2_eval_{dev,validation,calibration,blind_test}.json` | Regenerated corpus | Regenerate |
-| `crates/reflex-cli/src/commands/experiment.rs` | Thread the swept quality threshold into the freeze step | Modify |
+| `crates/reflex-cli/src/commands/experiment.rs` | Thread the swept quality threshold into the freeze step (5); lexicographic selection + measured report (5A); held-out wording in phase banner and generated report (6) | Modify |
+| `docs/experiments/live_experiment_hybrid_results.md` | Mark the 32-context description as the pre-0.2.0 corpus the historical run used | Modify |
 | `fixtures/frozen_hybrid_config.json` | Thresholds refit on the clean calibration partition | Regenerate |
 | `fixtures/README.md` | Replace contamination caveats with verified properties | Modify |
 | `README.md:"Evaluation Evidence"` | Same | Modify |
@@ -609,6 +613,274 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
+## Task 5A: Make the calibration sweep select a real operating point
+
+**Decision (2026-09-27): option 2 + option 1** from the Review's "Decision needed" section. The selection
+rule becomes lexicographic — fewest false accepts, then fewest frontier misses, then highest autonomous
+coverage — and the report prints the measured values of the selected point, with an explicit warning
+when it is not error-free. Applies lesson **L5**: no seeded search variables, no outcome text baked into
+a format string.
+
+**Why counts, not rates:** every grid point is evaluated on the same 40-task partition, so
+`frontier_missed_count` orders candidates exactly as `frontier_miss_rate` does, without `Option<f64>`
+(rate is `None` when there are no frontier-required tasks) or float comparison in the ordering.
+
+**Why `min_by`:** `Iterator::min_by` returns the *first* of several equal minima, so exact ties keep the
+earlier grid point deterministically, with no extra tie-break code. Coverage is `f64`, so it is compared
+with `total_cmp` (a total order; no `partial_cmp().unwrap()`).
+
+**Files:**
+- Modify: `crates/reflex-cli/src/commands/experiment.rs` (new items above `run_calibration_phase`;
+  selection block at lines ~572-652; `"all"` arm at ~228-229; `validation_notes` in
+  `freeze_configuration`; tests in `mod tests` at ~1519)
+
+- [ ] **Step 1: Write the failing tests**
+
+Append inside `mod tests` in `experiment.rs`, after `candidate_rates_with_empty_denominators_are_unavailable`:
+
+```rust
+    fn point(
+        tau: f64,
+        false_accepts: usize,
+        frontier_misses: usize,
+        coverage_pct: f64,
+    ) -> SweepPoint {
+        SweepPoint {
+            tau,
+            quality: 0.40,
+            false_accepts,
+            frontier_misses,
+            frontier_required: 12,
+            coverage_pct,
+        }
+    }
+
+    #[test]
+    fn selection_prefers_fewer_false_accepts_over_coverage() {
+        let risky = point(0.30, 1, 0, 90.0);
+        let safe = point(0.25, 0, 1, 50.0);
+        assert_eq!(select_operating_point(&[risky, safe]), Some(safe));
+    }
+
+    #[test]
+    fn selection_breaks_false_accept_ties_on_frontier_misses() {
+        let more_misses = point(0.30, 0, 2, 90.0);
+        let fewer_misses = point(0.25, 0, 1, 60.0);
+        assert_eq!(
+            select_operating_point(&[more_misses, fewer_misses]),
+            Some(fewer_misses)
+        );
+    }
+
+    #[test]
+    fn selection_breaks_error_ties_on_coverage() {
+        let lower = point(0.25, 0, 1, 60.0);
+        let higher = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[lower, higher]), Some(higher));
+    }
+
+    #[test]
+    fn selection_keeps_the_earlier_grid_point_on_an_exact_tie() {
+        let first = point(0.25, 0, 1, 70.0);
+        let second = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[first, second]), Some(first));
+    }
+
+    #[test]
+    fn selection_on_an_empty_grid_is_none() {
+        assert_eq!(select_operating_point(&[]), None);
+    }
+
+    #[test]
+    fn report_prints_measured_errors_and_warns_when_not_error_free() {
+        let report = describe_operating_point(&point(0.25, 2, 1, 70.0));
+        assert!(report.contains("2 false accepts"), "{report}");
+        assert!(report.contains("1/12 frontier misses"), "{report}");
+        assert!(report.contains("WARNING"), "{report}");
+    }
+
+    #[test]
+    fn report_does_not_warn_for_an_error_free_point() {
+        let report = describe_operating_point(&point(0.25, 0, 0, 70.0));
+        assert!(report.contains("0 false accepts"), "{report}");
+        assert!(report.contains("0/12 frontier misses"), "{report}");
+        assert!(!report.contains("WARNING"), "{report}");
+    }
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cargo test -p reflex-cli --bin reflex -- selection report_ > /tmp/rc-5a-red.txt 2>&1; grep -E 'error\[E0|cannot find' /tmp/rc-5a-red.txt`
+
+Expected: compile failure — `cannot find struct, variant or union type SweepPoint` and
+`cannot find function select_operating_point` / `describe_operating_point`. (Per **L1**: full output
+goes to the file; filter only when reading.)
+
+- [ ] **Step 3: Add the type, the selection function and the report function**
+
+Insert directly above `async fn run_calibration_phase(`:
+
+```rust
+/// One evaluated point of the calibration grid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SweepPoint {
+    tau: f64,
+    quality: f64,
+    false_accepts: usize,
+    frontier_misses: usize,
+    frontier_required: usize,
+    coverage_pct: f64,
+}
+
+/// Picks the operating point lexicographically: fewest false accepts, then fewest
+/// frontier misses, then highest autonomous coverage. Exact ties keep the earlier grid
+/// point. `None` only for an empty grid — there is no default to fall back to here.
+fn select_operating_point(points: &[SweepPoint]) -> Option<SweepPoint> {
+    points.iter().copied().min_by(|a, b| {
+        (a.false_accepts, a.frontier_misses)
+            .cmp(&(b.false_accepts, b.frontier_misses))
+            .then_with(|| b.coverage_pct.total_cmp(&a.coverage_pct))
+    })
+}
+
+/// Reports the selected point from its measured values only.
+fn describe_operating_point(p: &SweepPoint) -> String {
+    let mut report = format!(
+        ">>> Selected Operating Point: tau_accept = {:.2}, quality_thresh = {:.2} ({} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage)",
+        p.tau, p.quality, p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
+    );
+    if p.false_accepts > 0 || p.frontier_misses > 0 {
+        report.push_str(
+            "\n>>> WARNING: no grid point reached zero false accepts and zero frontier misses; this is the least-bad point by (false accepts, frontier misses, coverage).",
+        );
+    }
+    report
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `cargo test -p reflex-cli --bin reflex -- selection report_ > /tmp/rc-5a-green.txt 2>&1; grep 'test result' /tmp/rc-5a-green.txt`
+
+Expected: `test result: ok. 7 passed; 0 failed`.
+
+- [ ] **Step 5: Route `run_calibration_phase` through the new functions**
+
+Change its signature:
+
+```rust
+async fn run_calibration_phase(
+    args: &ExperimentArgs,
+) -> Result<SweepPoint, Box<dyn std::error::Error>> {
+```
+
+Delete the three seeded variables:
+
+```rust
+    let mut best_tau = 0.28;
+    let mut best_quality = 0.38;
+    let mut best_coverage = 0.0;
+```
+
+and put this in their place:
+
+```rust
+    let mut points = Vec::with_capacity(candidate_settings.len());
+```
+
+Replace the strict-match block at the end of the loop body:
+
+```rust
+        // Strict requirement: zero observed false accepts and frontier misses.
+        if m.false_accept_count == 0
+            && m.frontier_miss_rate == Some(0.0)
+            && m.autonomous_coverage_pct >= best_coverage
+        {
+            best_tau = tau;
+            best_quality = q_thresh;
+            best_coverage = m.autonomous_coverage_pct;
+        }
+```
+
+with:
+
+```rust
+        points.push(SweepPoint {
+            tau,
+            quality: q_thresh,
+            false_accepts: m.false_accept_count,
+            frontier_misses: m.frontier_missed_count,
+            frontier_required: m.frontier_required_tasks,
+            coverage_pct: m.autonomous_coverage_pct,
+        });
+```
+
+Replace everything after the table's closing `println!("└────…┘");` up to the end of the function:
+
+```rust
+    println!(
+        "\n>>> Best Observed Operating Point: tau_accept = {best_tau:.2}, quality_thresh = {best_quality:.2} (0 False Accepts, 0 frontier misses, {best_coverage:.1}% autonomous action coverage)"
+    );
+
+    Ok((best_tau, best_quality))
+}
+```
+
+with:
+
+```rust
+    let selected = select_operating_point(&points).ok_or("calibration grid is empty")?;
+    println!("\n{}", describe_operating_point(&selected));
+
+    Ok(selected)
+}
+```
+
+Update the `"all"` arm in `run_experiment`:
+
+```rust
+            let selected = run_calibration_phase(&args).await?;
+            freeze_configuration(selected.tau, selected.quality)?;
+```
+
+In `freeze_configuration`, replace the `validation_notes` string so the file records how it was chosen:
+
+```rust
+        validation_notes: "Parameters selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
+```
+
+- [ ] **Step 6: Run the full gate**
+
+Run:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets > /tmp/rc-5a-full.txt 2>&1; grep 'test result' /tmp/rc-5a-full.txt
+```
+
+Expected: fmt and clippy silent; test totals sum to **64** (57 before + 7 new), 0 failed.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates/reflex-cli/src/commands/experiment.rs
+git commit -m "fix(experiment): select the calibration point instead of returning seeds
+
+run_calibration_phase seeded best_tau/best_quality with 0.28/0.38 and only
+overwrote them on a zero-false-accept, zero-miss match that never occurred,
+so it always returned its seeds, and the report hardcoded '0 False Accepts,
+0 frontier misses' as literal text.
+
+Select lexicographically (false accepts, frontier misses, coverage) with
+min_by, and report the selected point's measured counts, warning when it is
+not error-free.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
 ## Task 5: Recalibrate the frozen configuration
 
 `fixtures/frozen_hybrid_config.json` (`optimal_tau_accept` 0.28, `clean_quality_accept_threshold` 0.38,
@@ -638,7 +910,7 @@ first — Step 1 does that.
 - Modify: `crates/reflex-cli/src/commands/experiment.rs`
 - Modify: `fixtures/frozen_hybrid_config.json`
 
-- [ ] **Step 1: Let the freeze step accept a swept quality threshold**
+- [x] **Step 1: Let the freeze step accept a swept quality threshold** — `c22b1ce`
 
 Add to `ExperimentArgs` (after the `risk_threshold` field at line 42-44):
 
@@ -659,7 +931,7 @@ async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error
 }
 ```
 
-- [ ] **Step 2: Verify it builds and lints**
+- [x] **Step 2: Verify it builds and lints** — `c22b1ce`
 
 Run:
 
@@ -672,15 +944,21 @@ Expected: clippy clean; help output now lists `--quality-threshold`.
 
 - [ ] **Step 3: Run the calibration sweep on the clean corpus**
 
-Run: `cargo run --bin reflex -- experiment --phase calibration --provider mock`
+**Requires Task 5A committed.** Without it this step prints the seeds, not a result.
 
-`--provider mock` avoids needing a live TypeSafe Jev key. Read the final line:
+Run: `cargo run --bin reflex -- experiment --phase calibration --provider mock > /tmp/rc-cal.txt 2>&1; grep -A1 'Selected Operating Point' /tmp/rc-cal.txt`
+
+`--provider mock` avoids needing a live TypeSafe Jev key. Expected — matches the 2026-09-24 manual
+measurement and was reproduced by a dry run of Task 5A's exact code on 2026-09-27:
 
 ```
->>> Best Observed Operating Point: tau_accept = <T>, quality_thresh = <Q> (...)
+>>> Selected Operating Point: tau_accept = 0.25, quality_thresh = 0.45 (0 false accepts, 1/12 frontier misses, 70.0% autonomous action coverage)
+>>> WARNING: no grid point reached zero false accepts and zero frontier misses; ...
 ```
 
-Record `<T>` and `<Q>`.
+Record `<T>` and `<Q>` from the output, **not** from this expectation. If they differ from 0.25 / 0.45,
+stop and record the full table in the Review section before freezing — a mismatch means the manual
+measurement or the new selection code is wrong, and that must be resolved first.
 
 - [ ] **Step 4: Freeze the swept values**
 
@@ -690,7 +968,8 @@ Expected: `>>> Configuration FROZEN to fixtures/frozen_hybrid_config.json`.
 
 - [ ] **Step 5: Record old and new thresholds side by side**
 
-Write both sets into the Review section of this file. Old values for reference:
+Write both sets, plus the selected point's false accepts, frontier misses and coverage, into the
+Review section of this file. Old values for reference:
 `optimal_tau_accept` 0.28, `clean_quality_accept_threshold` 0.38, `max_risk_small_reasoner` 0.58,
 `mandatory_frontier_risk` 0.70. If a threshold moves materially, that movement is itself the finding —
 it quantifies how much the contamination was distorting the fit.
@@ -698,75 +977,189 @@ it quantifies how much the contamination was distorting the fit.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/reflex-cli/src/commands/experiment.rs fixtures/frozen_hybrid_config.json
-git commit -m "fix(experiment): freeze the swept quality threshold instead of a literal
+git add fixtures/frozen_hybrid_config.json tasks/todo.md
+git commit -m "fix(fixtures): refit the frozen configuration on the clean calibration split
 
-run_freeze_step discarded the calibration sweep's best_quality and always
-wrote 0.38, so the frozen configuration could not reflect a recalibration.
-Add --quality-threshold and thread it through, then refit on the clean
-calibration partition.
+The previous 0.28/0.38 were the sweep's seed values, never a fit. With the
+held-out corpus and lexicographic selection, the sweep selects <T>/<Q>
+(<FA> false accepts, <M>/<R> frontier misses, <C>% coverage).
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
 ## Task 6: Update the documentation claims
 
+Every statement that the corpus is contaminated becomes false once Task 4 lands, and every mention of
+0.28 / 0.38 as the fitted values becomes false once Task 5 lands. Historical claims stay, but move to the
+past tense and name the corpus they were measured on — they were real measurements of the *old* data.
+
+`<T>` / `<Q>` below are the values recorded in Task 5 Step 3.
+
 **Files:**
-- Modify: `fixtures/README.md`, `README.md`, `CHANGELOG.md`
+- Modify: `fixtures/README.md`, `README.md`, `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`
+- Modify: `crates/reflex-cli/src/commands/experiment.rs` (lines ~684, ~689, ~1378)
+- Modify: `docs/experiments/live_experiment_hybrid_results.md` (line 8)
 
-- [ ] **Step 1: Rewrite the `fixtures/README.md` contamination paragraph**
+- [ ] **Step 1: `fixtures/README.md`**
 
-Replace the paragraph beginning "The 100-task evaluation fixture contains 32 distinct contexts" with a
-statement of the verified property and the test that enforces it:
-
-```markdown
-The four partitions hold disjoint task contexts: 200 records over 200 distinct contexts, with no context
-repeated inside a partition and none shared between partitions. This is enforced by
-`crates/reflex-calibration/tests/fixture_integrity.rs`, which runs in CI, so the property cannot regress
-silently. The corpus remains curated synthetic data: it establishes that the evaluation partition is
-genuinely held out, not that the policy performs as measured in production.
-```
-
-Also update the `v2_eval_blind_test.json` row in the table — drop "legacy filename; context templates
-recur across other partitions" and describe it as the held-out evaluation partition.
-
-- [ ] **Step 2: Update the README "Evaluation Evidence" section**
-
-Replace the sentence beginning "The fixture filename says `blind_test`, but the 100-task partition
-contains only 32 distinct task contexts" with the disjointness statement from Step 1. Leave the
-paragraph about the unretained run manifest **unchanged** — that limitation is still true and is a
-separate problem from contamination.
-
-- [ ] **Step 3: Add the 0.2.0 CHANGELOG entry**
-
-Insert above `## 0.1.1 - 2026-09-23`, matching the existing terse bullet style:
+Line 9 — replace the sentence beginning "Task contexts are sampled from a small set of templates" with:
 
 ```markdown
-## 0.2.0 - 2026-09-24
-
-- Partitioned the v2 evaluation corpus into disjoint context slices so the evaluation partition is
-  genuinely held out. Previously all four splits sampled one 34-template pool, and 30 of the 32 distinct
-  contexts in the evaluation partition also appeared in another split.
-- Expanded the task template pool from 34 to 200 so each of the 200 records carries a unique context.
-- Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness,
-  intra-split uniqueness, and the 200-context total in CI.
-- Refit the frozen policy configuration on the clean calibration partition.
+Each partition draws from its own disjoint slice of the template pool, so no task context appears in more than one partition.
 ```
 
-- [ ] **Step 4: Bump the workspace version**
+Line 16 — replace the `v2_eval_blind_test.json` row with:
 
-Set `version = "0.2.0"` in `Cargo.toml`, then run `cargo check --workspace` so `Cargo.lock` updates.
+```markdown
+| `v2_eval_blind_test.json` | Held-out evaluation partition (legacy filename; no context shared with other partitions) | 100 tasks | 2026-09-30 to 2026-10-05 |
+```
 
-- [ ] **Step 5: Commit**
+Line 18 — replace the whole paragraph beginning "The 100-task evaluation fixture contains 32 distinct contexts" with
+(the second half keeps the still-true manifest limitation):
+
+```markdown
+The four partitions hold disjoint task contexts: 200 records over 200 distinct contexts, with no context repeated inside a partition and none shared between partitions. This is enforced by `crates/reflex-calibration/tests/fixture_integrity.rs`, which runs in CI, so the property cannot regress silently. The corpus remains curated synthetic data: it establishes that the evaluation partition is held out, not that the policy performs as measured in production. A historical report describes live Jev inference on the pre-0.2.0 corpus, but per-task predictions and a run manifest are not checked in, so that run is not independently reproducible from this repository.
+```
+
+"Active Frozen Configuration" — change "The v0.1 default configuration frozen after calibration" to
+"The 0.2.0 configuration refit on the held-out calibration partition", and the two values to `<T>` / `<Q>`.
+
+Line 36 (`fresh_eval_*` row) stays unchanged — those legacy fixtures are still contaminated.
+
+- [ ] **Step 2: `README.md`**
+
+Line 168 — replace the paragraph beginning "The fixture filename says `blind_test`" with:
+
+```markdown
+The historical run used the pre-0.2.0 version of this fixture, which held only 32 distinct task contexts, 30 of which also appeared in the development, validation, or calibration splits, so those aggregates were not measured on held-out data. Since 0.2.0 the evaluation partition shares no context with any other split (enforced in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), but the historical figures have not been re-measured on it. The report records live Jev inference, but its outputs and exact run identity are unavailable for verification. This is curated synthetic evidence, not production validation.
+```
+
+Line 166 (the 69/100 paragraph) stays unchanged — it is already framed as historical.
+
+Line 189 — the `v2_eval_blind_test.json` row's purpose cell becomes
+`Curated synthetic held-out evaluation partition (legacy filename)`.
+
+Line 193 — the `frozen_hybrid_config.json` row becomes
+`Frozen 0.2.0 policy parameters ($\tau_{\text{accept}} = <T>, \theta_{\text{clean}} = <Q>, \text{risk}_{\text{frontier}} = 0.70$)`.
+
+- [ ] **Step 3: Runtime text in `experiment.rs`**
+
+Line ~684:
+
+```rust
+// 4. EVALUATION PHASE (LEGACY `blind` NAME)
+```
+
+Line ~689 — neutral on purpose: `--version v1` routes this phase to the still-contaminated
+`fresh_eval_*` fixtures, so the banner must not claim held-out:
+
+```rust
+    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS)");
+```
+
+Line ~1378 — the report hardcodes the v2 filename two lines above, so a v2 claim is accurate here.
+Replace the sentence
+`The fixture reuses task contexts across its partitions, so this is not a blind or independent held-out evaluation.`
+with
+`The evaluation partition shares no task context with the development, validation, or calibration partitions, but it is curated synthetic data.`
+
+- [ ] **Step 4: `docs/experiments/live_experiment_hybrid_results.md` line 8**
+
+Replace the bullet beginning "The fixture has 32 distinct task contexts" with:
+
+```markdown
+- At the time of this run the fixture (pre-0.2.0) had 32 distinct task contexts, shared with the development (21), validation (21), and calibration (22) partitions, so this run was not a blind or context-independent evaluation. The fixture has since been regenerated as a held-out partition; these figures were not re-measured on it.
+```
+
+- [ ] **Step 5: Verify no stale claim survives**
+
+Run:
 
 ```bash
-git add README.md fixtures/README.md CHANGELOG.md Cargo.toml Cargo.lock
+git grep -nE 'recur across|reuses task contexts|NOT BLIND|32 distinct' -- ':!tasks/*' ':!CHANGELOG.md'
+git grep -nE '0\.28|0\.38' -- '*.md' ':!tasks/*' ':!CHANGELOG.md'
+```
+
+Expected: first command prints only `fixtures/README.md:36` (the legacy `fresh_eval_*` row) and the two
+past-tense mentions from Steps 2 and 4. Second prints nothing, unless `<T>`/`<Q>` happen to equal them.
+
+- [ ] **Step 6: Add the 0.2.0 CHANGELOG entry**
+
+Insert above `## 0.1.1 - 2026-09-23`, dated with `date +%F` on the day of the commit:
+
+```markdown
+## 0.2.0 - <YYYY-MM-DD>
+
+- Partitioned the v2 evaluation corpus into disjoint context slices so the evaluation partition is genuinely held out. Previously all four splits sampled one 34-template pool, and 30 of the 32 distinct contexts in the evaluation partition also appeared in another split.
+- Expanded the task template pool from 34 to 200 so each of the 200 records carries a unique context.
+- Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness, intra-split uniqueness, and the 200-context total in CI.
+- Fixed the calibration sweep: it returned its seed values (0.28 / 0.38) because no grid point met its strict zero-error rule, and it printed "0 False Accepts, 0 frontier misses" as literal text. It now selects lexicographically (false accepts, frontier misses, coverage) and reports the selected point's measured counts, warning when it is not error-free.
+- Added `--quality-threshold` to the freeze step, which previously always wrote 0.38.
+- Refit the frozen configuration on the held-out calibration partition: tau_accept <T>, quality threshold <Q>.
+```
+
+- [ ] **Step 7: Bump the version (lesson L4)**
+
+Set `version = "0.2.0"` in root `Cargo.toml` (line 16), then `cargo check --workspace` so `Cargo.lock`
+updates. Confirm the three sources agree: `Cargo.toml` says 0.2.0, the top `## ` of `CHANGELOG.md` says
+0.2.0, and the tag will be created as `v0.2.0` in Task 7.
+
+- [ ] **Step 8: Full gate, then commit**
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets > /tmp/rc-6-full.txt 2>&1; grep 'test result' /tmp/rc-6-full.txt
+```
+
+Expected: fmt and clippy silent; 64 tests, 0 failed.
+
+```bash
+git add README.md fixtures/README.md CHANGELOG.md Cargo.toml Cargo.lock \
+  crates/reflex-cli/src/commands/experiment.rs docs/experiments/live_experiment_hybrid_results.md
 git commit -m "docs: state the verified held-out property and prepare 0.2.0
 
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+## Task 7: Publish
+
+Pushing is outward-facing: confirm with the user before Step 2.
+
+- [ ] **Step 1: Push the pending `main` commit first**
+
+Local `main` is 1 commit ahead of `origin/main` (`3823a02`, the 0.1.1 changelog). Push it first so the
+PR diff contains only this branch's work — and so a squash merge (lesson **L2**) cannot orphan it.
+
+```bash
+git push origin main
+```
+
+- [ ] **Step 2: Push the branch and open the PR**
+
+```bash
+git push -u origin feat/held-out-evaluation-corpus
+gh pr create --base main --title "v0.2.0: held-out evaluation corpus and honest calibration sweep" \
+  --body "$(sed -n '/^## 0.2.0/,/^## 0.1.1/p' CHANGELOG.md | sed '1d;$d'; printf '\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n')"
+```
+
+- [ ] **Step 3: After CI is green and the PR is merged — tag and release**
+
+```bash
+git switch main && git pull origin main
+git tag v0.2.0 && git push origin v0.2.0
+gh release create v0.2.0 --title "v0.2.0" --notes "$(sed -n '/^## 0.2.0/,/^## 0.1.1/p' CHANGELOG.md | sed '$d')"
+```
+
+- [ ] **Step 4: Clean up**
+
+Per **L2**, compare content before deleting: `git diff --quiet main feat/held-out-evaluation-corpus && echo safe`,
+record `git rev-parse feat/held-out-evaluation-corpus`, then `git branch -d` locally and
+`git push origin --delete feat/held-out-evaluation-corpus`.
 
 ---
 
@@ -780,6 +1173,16 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   documented as historical and nothing depends on them for current claims.
 - **Renaming `v2_eval_blind_test.json`.** The name becomes accurate once Task 4 lands; renaming would
   churn `experiment.rs` for no behavioral gain.
+- **Library defaults** `RiskDeferralConfig::default()` (`reflex-policy/src/risk_defer.rs:19`, 0.28) and
+  `GuardedHybridConfig::default()` (`reflex-policy/src/composer.rs:503`, 0.38), and the missing-file
+  fallback at `experiment.rs:~708`. Defaults are not fits; the frozen file is the fitted artifact.
+  Changing library defaults is an API-visible behavior change and deserves its own decision.
+- **Widening the calibration grid (option 3).** Only six clustered points are swept. Worth doing, but
+  it changes the experiment, not the correctness of the selection — a separate change.
+- **The 8.33% frontier miss (1 of 12) present at every grid point.** It is a finding about the policy
+  itself, not the thresholds; no threshold in the grid removes it. Investigate the missed task separately.
+- **The "69% autonomous coverage" claim in the `rustfuture/rustfuture` profile README.** It quotes the
+  historical run on the contaminated corpus. Different repository — reword it after 0.2.0 ships.
 
 ---
 
@@ -792,8 +1195,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - [x] Task 2 — Disjoint partitioning — `c1149b5`
 - [x] Task 3 — Pool expansion to 200 — `3ef3140`
 - [x] Task 4 — Regenerate, guard green — `c1149b5`
-- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); **Steps 3-6 BLOCKED**
+- [ ] Task 5A — Lexicographic selection + measured report (decided 2026-09-27; unblocks Task 5)
+- [~] Task 5 — Recalibrate frozen config — Steps 1-2 done (`c22b1ce`); Steps 3-6 wait on 5A
 - [ ] Task 6 — Documentation and 0.2.0
+- [ ] Task 7 — Publish (push `main`, push branch, PR, tag `v0.2.0`, release)
 
 ### Outcome against the success criteria
 
@@ -853,9 +1258,31 @@ frontier misses? Three options considered:
 Note under every option: 8.33% frontier miss (1 of 12 escalation-required tasks) appears at every grid
 point on the clean corpus. That is a substantive finding about the policy, not an artifact.
 
+### Decision (2026-09-27)
+
+**Option 2 + option 1**, as recommended above — implemented by Task 5A. The frozen configuration becomes
+a real sweep result, and the report can no longer claim zero errors it did not measure.
+
+**Dry run (2026-09-27, throwaway worktree, discarded):** Task 5A's code applied verbatim from this plan —
+every "replace this" snippet matched the source exactly; clippy clean; **64/64 tests** pass; the 7 new
+tests pass. `rustfmt` rewrapped the `point` helper signature — the plan now carries the formatted version.
+Mock sweep on the clean calibration partition:
+
+| tau / Q | False accepts | Frontier miss | Coverage |
+| :--- | ---: | ---: | ---: |
+| **0.25 / 0.45** (selected) | **0** | 8.33% | 70.0% |
+| 0.28 / 0.42 | 1 | 8.33% | 72.5% |
+| 0.28 / 0.38 (current frozen) | 1 | 8.33% | 72.5% |
+| 0.30 / 0.38 | 1 | 8.33% | 72.5% |
+| 0.32 / 0.35 | 1 | 8.33% | 72.5% |
+| 0.35 / 0.35 | 1 | 8.33% | 72.5% |
+
+The currently frozen 0.28 / 0.38 produces a false accept on held-out data. Moving to 0.25 / 0.45 trades
+2.5 points of coverage for eliminating it.
+
 ### Resume checklist
 
-1. Answer the decision above.
-2. Finish Task 5 Steps 3-6 accordingly.
-3. Execute Task 6 (docs + 0.2.0), adjusting the CHANGELOG bullet about refitting to match the decision.
-4. `main` is also still 1 commit ahead of `origin/main` (the 0.1.1 changelog) and unpushed.
+1. Task 5A (TDD: 7 tests red → green, full gate at 64 tests).
+2. Task 5 Steps 3-6: run the sweep, check it selects 0.25 / 0.45, freeze, record old vs new here.
+3. Task 6: docs, runtime text, CHANGELOG 0.2.0, version bump.
+4. Task 7: push `main` (still 1 ahead of `origin/main`), push branch, PR, then tag and release.

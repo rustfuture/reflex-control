@@ -226,7 +226,15 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
             let selected = run_calibration_phase(&args).await?;
-            freeze_configuration(selected.tau, selected.quality, sweep_provenance(&selected))?;
+            freeze_configuration(
+                selected.tau,
+                selected.quality,
+                sweep_provenance(
+                    &selected,
+                    &get_split_filepath(&args, "calibration"),
+                    &args.provider,
+                ),
+            )?;
             run_evaluation_phase(&args).await?;
         }
         other => {
@@ -510,9 +518,9 @@ fn describe_operating_point(p: &SweepPoint) -> String {
 }
 
 /// Provenance note for a configuration frozen from a sweep result.
-fn sweep_provenance(p: &SweepPoint) -> String {
+fn sweep_provenance(p: &SweepPoint, dataset: &str, provider: &str) -> String {
     format!(
-        "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on the calibration partition: {} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone.",
+        "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on {dataset} with provider {provider}: {} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone.",
         p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
     )
 }
@@ -721,7 +729,15 @@ async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error
     match (args.risk_threshold, args.quality_threshold) {
         (None, None) => {
             let selected = run_calibration_phase(args).await?;
-            freeze_configuration(selected.tau, selected.quality, sweep_provenance(&selected))
+            freeze_configuration(
+                selected.tau,
+                selected.quality,
+                sweep_provenance(
+                    &selected,
+                    &get_split_filepath(args, "calibration"),
+                    &args.provider,
+                ),
+            )
         }
         (Some(tau), Some(quality)) => freeze_configuration(
             tau,
@@ -1721,12 +1737,22 @@ mod tests {
 
     #[test]
     fn sweep_provenance_records_the_measured_counts() {
-        let notes = sweep_provenance(&point(0.25, 0, 1, 70.0));
+        let notes = sweep_provenance(
+            &point(0.25, 0, 1, 70.0),
+            "fixtures/v2_eval_calibration.json",
+            "mock",
+        );
         assert!(notes.contains("0 false accepts"), "{notes}");
         assert!(notes.contains("1/12 frontier misses"), "{notes}");
         assert!(
             notes.contains("70.0% autonomous action coverage"),
             "{notes}"
         );
+        assert!(
+            notes.contains("fixtures/v2_eval_calibration.json"),
+            "{notes}"
+        );
+        assert!(notes.contains("provider mock"), "{notes}");
+        assert!(!notes.contains("calibration partition"), "{notes}");
     }
 }

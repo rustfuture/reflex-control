@@ -82,3 +82,7 @@ False accepts at the selected point: none
 - Under live TypeSafe Jev semantic inference, all six grid settings record 0/12 frontier misses and 0 false accepts, including on `v2-task-1075`. This is consistent with the live signals carrying the context the mock lacks, but it rests on 12 frontier-required tasks: the approximate two-sided 95% Wilson upper bound for 0/12 is 24.2%. Two independent live runs produced identical sweep tables.
 - No adjustment of `tau_accept` or `quality_thresh` within the policy can force `v2-task-1075` to the frontier under mock signals, because composite risk (0.254) remains below the fixed `max_risk_for_small_reasoner` (0.58) threshold.
 - Widening the grid would not resolve the mock miss. For the live provider it is warranted: coverage rises from 60.0% to 70.0% as `tau_accept` increases and the quality threshold falls, the last four grid points tie at 70.0% with no errors, and the selected point (`tau_accept = 0.28, quality_thresh = 0.38`) is simply the first of those ties. The grid therefore does not show where coverage stops improving or where errors begin; extending it toward higher `tau_accept` and lower quality thresholds would.
+
+## Follow-up
+
+The six-point grid above was replaced by a 133-point grid in 0.3.0. Under live Jev no point on that grid had a false accept or frontier miss on the calibration partition, and the sweep selected tau_accept 0.22 and quality threshold 0.40. See `live_heldout_results.md` for the held-out evaluation with those thresholds.

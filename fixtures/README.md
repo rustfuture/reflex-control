@@ -18,13 +18,13 @@ These generated task fixtures are reproducible with `docs/experiments/generate_v
 The four partitions hold disjoint task contexts: 200 records over 200 distinct contexts, with no context repeated inside a partition and none shared between partitions. This is enforced by `crates/reflex-calibration/tests/fixture_integrity.rs`, which runs in CI, so exact reuse of a task context cannot regress silently. The corpus remains curated synthetic data: it establishes that the evaluation partition is held out, not that the policy performs as measured in production. Disjointness holds at the level of task-context text, which is what the live Jev provider reads; the mock provider ignores context and derives its signals from each task's deterministic features, so mock results reflect the corpus's class structure rather than generalization to unseen contexts. A historical report describes live Jev inference on the pre-0.2.0 corpus, but per-task predictions and a run manifest are not checked in, so that run is not independently reproducible from this repository.
 
 ### Active Frozen Configuration
-- `frozen_hybrid_config.json`: The 0.2.0 configuration selected by the calibration sweep on the disjoint calibration partition, using the mock provider, specifying:
-  - `optimal_tau_accept`: 0.25
-  - `clean_quality_accept_threshold`: 0.45
+- `frozen_hybrid_config.json`: The 0.3.0 configuration selected by the calibration sweep on the disjoint calibration partition, using the live Jev provider, specifying:
+  - `optimal_tau_accept`: 0.22
+  - `clean_quality_accept_threshold`: 0.40
   - `max_risk_small_reasoner`: 0.58
   - `mandatory_frontier_risk`: 0.70
 
-  The attached validation note records the selection rule, dataset, provider, and measured counts. It comes from the deterministic mock provider and is reproducible with `cargo run --bin reflex -- experiment --phase calibration --provider mock`. The thresholds are not calibrated against live Jev signals, and the move from 0.28 / 0.38 rests on a single false accept (1 vs 0 across 40 calibration tasks).
+  The attached validation note records the selection rule, dataset, provider, and measured counts. It comes from a live Jev sweep over the 133-point grid (`cargo run --bin reflex -- experiment --phase freeze --provider jev`, which requires `JEV_API_KEY` or `TYPESAFE_API_KEY`): no grid point had a false accept or frontier miss on the 40 calibration tasks, and the selected point is the first to reach the highest coverage (70.0%). Live Jev signals vary slightly between calls, so a re-run can differ by a task in coverage at some grid points; three live sweeps selected the same point. The 0.2.0 configuration (0.25 / 0.45) was fit with the mock provider.
 
 ---
 
@@ -39,7 +39,7 @@ The four partitions hold disjoint task contexts: 200 records over 200 distinct c
 | `benchmark_dataset_5000.json` | Scaled synthetic simulation dataset | Used for large-scale Pareto curve exploration. |
 | `formulation_selection_100.json` | Formulation comparison dataset across choice/noul/score primitives | Pre-atomic evidence layer experiments. |
 | `held_out_100.json` | Early synthetic split (legacy filename and report label) | Superseded; the filename does not establish an independent evaluation set. |
-| `frozen_configuration.json` | Frozen choices for the early primitive benchmark | Used by `reflex benchmark --formulation frozen`; this is not the 0.2.0 policy configuration. |
+| `frozen_configuration.json` | Frozen choices for the early primitive benchmark | Used by `reflex benchmark --formulation frozen`; this is not the active policy configuration. |
 
 > **Note on Data Provenance**:
 > All fixture files in this directory are structured test fixtures and synthetic benchmarks designed for controlled evaluation. They are explicitly distinguished from unbounded production multi-tenant agent traces.

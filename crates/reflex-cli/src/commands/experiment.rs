@@ -226,7 +226,7 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
             let selected = run_calibration_phase(&args).await?;
-            freeze_configuration(selected.tau, selected.quality)?;
+            freeze_configuration(selected.tau, selected.quality, sweep_provenance(&selected))?;
             run_evaluation_phase(&args).await?;
         }
         other => {
@@ -493,6 +493,9 @@ fn select_operating_point(points: &[SweepPoint]) -> Option<SweepPoint> {
 }
 
 /// Reports the selected point from its measured values only.
+///
+/// `p` must come from `select_operating_point` over the full grid: the warning's "no grid
+/// point" claim depends on it.
 fn describe_operating_point(p: &SweepPoint) -> String {
     let mut report = format!(
         ">>> Selected Operating Point: tau_accept = {:.2}, quality_thresh = {:.2} ({} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage)",
@@ -504,6 +507,14 @@ fn describe_operating_point(p: &SweepPoint) -> String {
         );
     }
     report
+}
+
+/// Provenance note for a configuration frozen from a sweep result.
+fn sweep_provenance(p: &SweepPoint) -> String {
+    format!(
+        "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on the calibration partition: {} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone.",
+        p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
+    )
 }
 
 async fn run_calibration_phase(
@@ -687,6 +698,7 @@ async fn run_calibration_phase(
 fn freeze_configuration(
     tau_accept: f64,
     quality_thresh: f64,
+    validation_notes: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = FrozenExperimentConfig {
         winning_candidate: "Candidate E (Guarded Hybrid Architecture)".to_string(),
@@ -695,7 +707,7 @@ fn freeze_configuration(
         max_risk_small_reasoner: 0.58,
         mandatory_frontier_risk: 0.70,
         timestamp: Utc::now().to_rfc3339(),
-        validation_notes: "Parameters selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
+        validation_notes,
     };
 
     let path = "fixtures/frozen_hybrid_config.json";
@@ -706,10 +718,18 @@ fn freeze_configuration(
 }
 
 async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let tau = args.risk_threshold.unwrap_or(0.28);
-    let quality = args.quality_threshold.unwrap_or(0.38);
-    freeze_configuration(tau, quality)?;
-    Ok(())
+    match (args.risk_threshold, args.quality_threshold) {
+        (None, None) => {
+            let selected = run_calibration_phase(args).await?;
+            freeze_configuration(selected.tau, selected.quality, sweep_provenance(&selected))
+        }
+        (Some(tau), Some(quality)) => freeze_configuration(
+            tau,
+            quality,
+            "Parameters supplied via --risk-threshold and --quality-threshold, not selected by a calibration sweep.".to_string(),
+        ),
+        _ => Err("--phase freeze takes both --risk-threshold and --quality-threshold, or neither to run the calibration sweep".into()),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1683,6 +1703,12 @@ mod tests {
         assert!(report.contains("2 false accepts"), "{report}");
         assert!(report.contains("1/12 frontier misses"), "{report}");
         assert!(report.contains("WARNING"), "{report}");
+        assert!(report.contains("tau_accept = 0.25"), "{report}");
+        assert!(report.contains("quality_thresh = 0.40"), "{report}");
+        assert!(
+            report.contains("70.0% autonomous action coverage"),
+            "{report}"
+        );
     }
 
     #[test]
@@ -1691,5 +1717,16 @@ mod tests {
         assert!(report.contains("0 false accepts"), "{report}");
         assert!(report.contains("0/12 frontier misses"), "{report}");
         assert!(!report.contains("WARNING"), "{report}");
+    }
+
+    #[test]
+    fn sweep_provenance_records_the_measured_counts() {
+        let notes = sweep_provenance(&point(0.25, 0, 1, 70.0));
+        assert!(notes.contains("0 false accepts"), "{notes}");
+        assert!(notes.contains("1/12 frontier misses"), "{notes}");
+        assert!(
+            notes.contains("70.0% autonomous action coverage"),
+            "{notes}"
+        );
     }
 }

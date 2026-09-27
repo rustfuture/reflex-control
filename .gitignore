@@ -8,3 +8,6 @@ reflex.toml
 .env
 .env.*
 !.env.example
+
+# Local agent planning notes (plan, review log, lessons)
+tasks/

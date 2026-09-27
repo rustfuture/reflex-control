@@ -4,7 +4,7 @@
 [![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Architecture: Guarded Hybrid](https://img.shields.io/badge/architecture-guarded--hybrid-purple.svg)](docs/experiments/live_experiment_hybrid_results.md)
-[![Status: Evaluated](https://img.shields.io/badge/evaluation-frozen--v0.1-brightgreen.svg)](fixtures/README.md)
+[![Config: frozen 0.2.0](https://img.shields.io/badge/config-frozen--0.2.0-blue.svg)](fixtures/README.md)
 
 A deterministic, calibrated **System-1 control plane and policy engine** for AI agent runtimes. It arbitrates whether an agent execution step should continue, retry, accept autonomously, request local verification, or escalate to an expensive frontier reasoning model.
 
@@ -165,7 +165,7 @@ cargo run -p example-shadow-mode
 
 The repository preserves historical Candidate E aggregates in [`docs/experiments/live_experiment_hybrid_results.md`](docs/experiments/live_experiment_hybrid_results.md). The report records 69/100 autonomous actions and 69/100 frontier calls avoided, plus 0/31 missed frontier-required tasks and 0/69 unnecessary frontier calls. These are historical aggregate claims: task-level predictions and the run manifest were not retained, so the counts cannot be independently reproduced from this checkout.
 
-The fixture filename says `blind_test`, but the 100-task partition contains only 32 distinct task contexts. It shares 21 contexts with the development split, 21 with validation, and 22 with calibration. It therefore is not a blind or independent held-out evaluation. The report records live Jev inference, but its outputs and exact run identity are unavailable for verification. This is curated synthetic evidence, not production validation.
+The historical run used the pre-0.2.0 version of this fixture, which held only 32 distinct task contexts, 30 of which also appeared in the development, validation, or calibration splits, so those aggregates were not measured on held-out data. Since 0.2.0 the evaluation partition shares no context with any other split (enforced in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), but the historical figures have not been re-measured on it. The report records live Jev inference, but its outputs and exact run identity are unavailable for verification. This is curated synthetic evidence, not production validation.
 
 The reported counts have approximate two-sided 95% Wilson intervals of 59.4%–77.2% for 69/100 autonomous actions, 0%–10.9% for 0/31 frontier misses, and 0%–5.3% for 0/69 unnecessary frontier calls. These bounds describe the reported sample counts only; zero observed events do not establish zero risk.
 
@@ -186,11 +186,11 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 
 | Dataset File | Role | Sample Count |
 | :--- | :--- | :---: |
-| `fixtures/v2_eval_blind_test.json` | Curated synthetic evaluation partition (legacy filename; contexts recur across splits) | 100 tasks |
+| `fixtures/v2_eval_blind_test.json` | Curated synthetic held-out evaluation partition (legacy filename) | 100 tasks |
 | `fixtures/v2_eval_calibration.json` | Systematic grid sweep split for threshold calibration ($\tau_{\text{accept}}, \theta_{\text{clean}}$) | 40 tasks |
 | `fixtures/v2_eval_validation.json` | Architecture comparison split (Guarded Hybrid vs Deterministic Rules) | 30 tasks |
 | `fixtures/v2_eval_dev.json` | Development & connectivity smoke testing split | 30 tasks |
-| `fixtures/frozen_hybrid_config.json` | Frozen v0.1 policy parameters ($\tau_{\text{accept}} = 0.28, \theta_{\text{clean}} = 0.38, \text{risk}_{\text{frontier}} = 0.70$) | Config |
+| `fixtures/frozen_hybrid_config.json` | Frozen 0.2.0 policy parameters ($\tau_{\text{accept}} = 0.25, \theta_{\text{clean}} = 0.45, \text{risk}_{\text{frontier}} = 0.70$); fit with the mock provider | Config |
 
 ---
 

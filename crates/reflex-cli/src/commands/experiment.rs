@@ -43,6 +43,10 @@ pub struct ExperimentArgs {
     #[arg(long)]
     pub risk_threshold: Option<f64>,
 
+    /// Clean-quality acceptance threshold theta_clean for --phase freeze (requires --risk-threshold); ignored by other phases
+    #[arg(long)]
+    pub quality_threshold: Option<f64>,
+
     /// Path to SQLite database for telemetry
     #[arg(long, default_value = "reflex.db")]
     pub db: String,
@@ -216,13 +220,15 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
             run_evaluation_phase(&args).await?;
         }
         "all" => {
+            if args.dataset.is_some() {
+                return Err("--dataset cannot be used with --phase all: every phase would read the same file, so calibration and evaluation would share data".into());
+            }
             println!(
                 "\n>>> Starting Evaluation Protocol (DEV -> VAL -> CAL -> FREEZE -> EVALUATION)..."
             );
             run_dev_phase(&args).await?;
             run_validation_phase(&args).await?;
-            let (winning_tau, winning_quality) = run_calibration_phase(&args).await?;
-            freeze_configuration(winning_tau, winning_quality)?;
+            freeze_from_sweep(&args).await?;
             run_evaluation_phase(&args).await?;
         }
         other => {
@@ -466,9 +472,56 @@ async fn run_validation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
 // 3. CALIBRATION PHASE (OPTIMIZE TAU_ACCEPT & QUALITY THRESHOLD)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One evaluated point of the calibration grid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SweepPoint {
+    tau: f64,
+    quality: f64,
+    false_accepts: usize,
+    frontier_misses: usize,
+    frontier_required: usize,
+    coverage_pct: f64,
+}
+
+/// Picks the operating point lexicographically: fewest false accepts, then fewest
+/// frontier misses, then highest autonomous coverage. Exact ties keep the earlier grid
+/// point. `None` only for an empty grid — there is no default to fall back to here.
+fn select_operating_point(points: &[SweepPoint]) -> Option<SweepPoint> {
+    points.iter().copied().min_by(|a, b| {
+        (a.false_accepts, a.frontier_misses)
+            .cmp(&(b.false_accepts, b.frontier_misses))
+            .then_with(|| b.coverage_pct.total_cmp(&a.coverage_pct))
+    })
+}
+
+/// Reports the selected point from its measured values only.
+///
+/// `p` must come from `select_operating_point` over the full grid: the warning's "no grid
+/// point" claim depends on it.
+fn describe_operating_point(p: &SweepPoint) -> String {
+    let mut report = format!(
+        ">>> Selected Operating Point: tau_accept = {:.2}, quality_thresh = {:.2} ({} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage)",
+        p.tau, p.quality, p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
+    );
+    if p.false_accepts > 0 || p.frontier_misses > 0 {
+        report.push_str(
+            "\n>>> WARNING: no grid point reached zero false accepts and zero frontier misses; this is the least-bad point by (false accepts, frontier misses, coverage).",
+        );
+    }
+    report
+}
+
+/// Provenance note for a configuration frozen from a sweep result.
+fn sweep_provenance(p: &SweepPoint, dataset: &str, provider: &str) -> String {
+    format!(
+        "Selected by the calibration sweep: fewest false accepts, then fewest frontier misses, then highest autonomous action coverage. Measured on {dataset} with provider {provider}: {} false accepts, {}/{} frontier misses, {:.1}% autonomous action coverage. Per-task predictions are not retained, so these counts are not independently reproducible from this file alone.",
+        p.false_accepts, p.frontier_misses, p.frontier_required, p.coverage_pct
+    )
+}
+
 async fn run_calibration_phase(
     args: &ExperimentArgs,
-) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+) -> Result<SweepPoint, Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
     println!(" PHASE 3: CALIBRATION SET (40 tasks) - THRESHOLD OPTIMIZATION");
     println!("==========================================================================");
@@ -565,9 +618,7 @@ async fn run_calibration_phase(
     println!("│ tau_accept │ QualityThresh│ FalseAccept │ Frontier Miss Rate │ Coverage │ FrontierAvoid│ Cost / Task  │");
     println!("├────────────┼──────────────┼─────────────┼──────────┼──────────┼──────────────┼──────────────┤");
 
-    let mut best_tau = 0.28;
-    let mut best_quality = 0.38;
-    let mut best_coverage = 0.0;
+    let mut points = Vec::with_capacity(candidate_settings.len());
 
     for &(tau, q_thresh) in &candidate_settings {
         let hybrid_config = GuardedHybridConfig {
@@ -629,28 +680,27 @@ async fn run_calibration_phase(
             m.avg_cost_per_task
         );
 
-        // Strict requirement: zero observed false accepts and frontier misses.
-        if m.false_accept_count == 0
-            && m.frontier_miss_rate == Some(0.0)
-            && m.autonomous_coverage_pct >= best_coverage
-        {
-            best_tau = tau;
-            best_quality = q_thresh;
-            best_coverage = m.autonomous_coverage_pct;
-        }
+        points.push(SweepPoint {
+            tau,
+            quality: q_thresh,
+            false_accepts: m.false_accept_count,
+            frontier_misses: m.frontier_missed_count,
+            frontier_required: m.frontier_required_tasks,
+            coverage_pct: m.autonomous_coverage_pct,
+        });
     }
     println!("└────────────┴──────────────┴─────────────┴──────────┴──────────┴──────────────┴──────────────┘");
 
-    println!(
-        "\n>>> Best Observed Operating Point: tau_accept = {best_tau:.2}, quality_thresh = {best_quality:.2} (0 False Accepts, 0 frontier misses, {best_coverage:.1}% autonomous action coverage)"
-    );
+    let selected = select_operating_point(&points).ok_or("calibration grid is empty")?;
+    println!("\n{}", describe_operating_point(&selected));
 
-    Ok((best_tau, best_quality))
+    Ok(selected)
 }
 
 fn freeze_configuration(
     tau_accept: f64,
     quality_thresh: f64,
+    validation_notes: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = FrozenExperimentConfig {
         winning_candidate: "Candidate E (Guarded Hybrid Architecture)".to_string(),
@@ -659,7 +709,7 @@ fn freeze_configuration(
         max_risk_small_reasoner: 0.58,
         mandatory_frontier_risk: 0.70,
         timestamp: Utc::now().to_rfc3339(),
-        validation_notes: "Parameters selected by the calibration sweep. This file does not retain per-task predictions, so observed calibration counts are not independently reproducible from the configuration alone.".to_string(),
+        validation_notes,
     };
 
     let path = "fixtures/frozen_hybrid_config.json";
@@ -670,18 +720,43 @@ fn freeze_configuration(
 }
 
 async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let tau = args.risk_threshold.unwrap_or(0.28);
-    freeze_configuration(tau, 0.38)?;
-    Ok(())
+    match (args.risk_threshold, args.quality_threshold) {
+        (None, None) => freeze_from_sweep(args).await,
+        (Some(tau), Some(quality)) => freeze_configuration(
+            tau,
+            quality,
+            "Parameters supplied via --risk-threshold and --quality-threshold, not selected by a calibration sweep.".to_string(),
+        ),
+        _ => Err("--phase freeze takes both --risk-threshold and --quality-threshold, or neither to run the calibration sweep".into()),
+    }
+}
+
+/// Runs the calibration sweep and freezes the selected point with its measured provenance.
+async fn freeze_from_sweep(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let selected = run_calibration_phase(args).await?;
+    let provider = if args.provider.eq_ignore_ascii_case("jev") {
+        "jev"
+    } else {
+        "mock"
+    };
+    freeze_configuration(
+        selected.tau,
+        selected.quality,
+        sweep_provenance(
+            &selected,
+            &get_split_filepath(args, "calibration"),
+            provider,
+        ),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. EVALUATION PHASE (LEGACY `blind` NAME; CONTEXTS RECUR ACROSS PARTITIONS)
+// 4. EVALUATION PHASE (LEGACY `blind` NAME)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
-    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS; NOT BLIND OR HELD-OUT)");
+    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS)");
     println!("==========================================================================");
 
     let frozen_file = "fixtures/frozen_hybrid_config.json";
@@ -1003,7 +1078,13 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     println!("==========================================================================");
     print_comparison_table(&[ma.clone(), mb.clone(), mc.clone(), me.clone()]);
 
-    save_markdown_artifact(&[ma, mb, mc, me], &args.provider)?;
+    let verified_held_out = args.dataset.is_none() && args.version != "v1";
+    save_markdown_artifact(
+        &[ma, mb, mc, me],
+        &args.provider,
+        &evaluation_file,
+        verified_held_out,
+    )?;
 
     Ok(())
 }
@@ -1361,17 +1442,30 @@ fn print_comparison_table(metrics: &[CandidateSummaryMetrics]) {
     println!("┘");
 }
 
+/// What the generated report may truthfully say about its evaluation data. Only the
+/// default v2 partitions are verified disjoint, by `fixture_integrity.rs` in CI.
+fn evaluation_data_note(path: &str, verified_held_out: bool) -> String {
+    if verified_held_out {
+        format!("`{path}` shares no task context with the development, validation, or calibration partitions (verified in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), but it is curated synthetic data.")
+    } else {
+        format!("`{path}` is not a verified held-out partition: its task-context overlap with the calibration data was not checked.")
+    }
+}
+
 fn save_markdown_artifact(
     metrics: &[CandidateSummaryMetrics],
     provider: &str,
+    eval_path: &str,
+    verified_held_out: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut md = String::new();
     md.push_str("# Reflex Control: Guarded Hybrid Architecture Empirical Benchmark\n\n");
-    md.push_str("**Evaluation Dataset**: 100 curated synthetic tasks (`fixtures/v2_eval_blind_test.json`; legacy filename)\n\n");
+    md.push_str(&format!("**Evaluation Dataset**: `{eval_path}`\n\n"));
     md.push_str(&format!("**Provider mode**: `{provider}`\n\n"));
-    md.push_str(
-        "> This is a generated experimental report, not production validation. The fixture reuses task contexts across its partitions, so this is not a blind or independent held-out evaluation. Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
-    );
+    md.push_str(&format!(
+        "> This is a generated experimental report, not production validation. {} Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
+        evaluation_data_note(eval_path, verified_held_out)
+    ));
     md.push_str("### 1. Comparative Performance Matrix\n\n");
     md.push_str("| Metric ");
     for m in metrics {
@@ -1586,5 +1680,117 @@ mod tests {
         assert_eq!(metrics.frontier_miss_ci.sample_size, 0);
         assert_eq!(metrics.unnecessary_frontier_call_ci.sample_size, 0);
         assert_eq!(format_rate_pct(metrics.frontier_miss_rate), "N/A");
+    }
+
+    fn point(
+        tau: f64,
+        false_accepts: usize,
+        frontier_misses: usize,
+        coverage_pct: f64,
+    ) -> SweepPoint {
+        SweepPoint {
+            tau,
+            quality: 0.40,
+            false_accepts,
+            frontier_misses,
+            frontier_required: 12,
+            coverage_pct,
+        }
+    }
+
+    #[test]
+    fn selection_prefers_fewer_false_accepts_over_coverage() {
+        let risky = point(0.30, 1, 0, 90.0);
+        let safe = point(0.25, 0, 1, 50.0);
+        assert_eq!(select_operating_point(&[risky, safe]), Some(safe));
+    }
+
+    #[test]
+    fn selection_breaks_false_accept_ties_on_frontier_misses() {
+        let more_misses = point(0.30, 0, 2, 90.0);
+        let fewer_misses = point(0.25, 0, 1, 60.0);
+        assert_eq!(
+            select_operating_point(&[more_misses, fewer_misses]),
+            Some(fewer_misses)
+        );
+    }
+
+    #[test]
+    fn selection_breaks_error_ties_on_coverage() {
+        let lower = point(0.25, 0, 1, 60.0);
+        let higher = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[lower, higher]), Some(higher));
+    }
+
+    #[test]
+    fn selection_keeps_the_earlier_grid_point_on_an_exact_tie() {
+        let first = point(0.25, 0, 1, 70.0);
+        let second = point(0.28, 0, 1, 70.0);
+        assert_eq!(select_operating_point(&[first, second]), Some(first));
+    }
+
+    #[test]
+    fn selection_on_an_empty_grid_is_none() {
+        assert_eq!(select_operating_point(&[]), None);
+    }
+
+    #[test]
+    fn report_prints_measured_errors_and_warns_when_not_error_free() {
+        let report = describe_operating_point(&point(0.25, 2, 1, 70.0));
+        assert!(report.contains("2 false accepts"), "{report}");
+        assert!(report.contains("1/12 frontier misses"), "{report}");
+        assert!(report.contains("WARNING"), "{report}");
+        assert!(report.contains("tau_accept = 0.25"), "{report}");
+        assert!(report.contains("quality_thresh = 0.40"), "{report}");
+        assert!(
+            report.contains("70.0% autonomous action coverage"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn report_does_not_warn_for_an_error_free_point() {
+        let report = describe_operating_point(&point(0.25, 0, 0, 70.0));
+        assert!(report.contains("0 false accepts"), "{report}");
+        assert!(report.contains("0/12 frontier misses"), "{report}");
+        assert!(!report.contains("WARNING"), "{report}");
+    }
+
+    #[test]
+    fn sweep_provenance_records_the_measured_counts() {
+        let notes = sweep_provenance(
+            &point(0.25, 0, 1, 70.0),
+            "fixtures/v2_eval_calibration.json",
+            "mock",
+        );
+        assert!(notes.contains("0 false accepts"), "{notes}");
+        assert!(notes.contains("1/12 frontier misses"), "{notes}");
+        assert!(
+            notes.contains("70.0% autonomous action coverage"),
+            "{notes}"
+        );
+        assert!(
+            notes.contains("fixtures/v2_eval_calibration.json"),
+            "{notes}"
+        );
+        assert!(notes.contains("provider mock"), "{notes}");
+        assert!(!notes.contains("calibration partition"), "{notes}");
+    }
+
+    #[test]
+    fn evaluation_note_claims_held_out_only_when_verified() {
+        let verified = evaluation_data_note("fixtures/v2_eval_blind_test.json", true);
+        assert!(verified.contains("shares no task context"), "{verified}");
+        assert!(verified.contains("fixture_integrity.rs"), "{verified}");
+
+        let unverified = evaluation_data_note("fixtures/fresh_eval_blind_test.json", false);
+        assert!(
+            unverified.contains("not a verified held-out partition"),
+            "{unverified}"
+        );
+        assert!(
+            !unverified.contains("shares no task context"),
+            "{unverified}"
+        );
     }
 }

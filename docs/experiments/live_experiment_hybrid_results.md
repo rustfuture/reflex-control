@@ -5,7 +5,7 @@ This page preserves the aggregate figures recorded for the Guarded Hybrid (Candi
 ## Provenance and limits
 
 - Fixture: `fixtures/v2_eval_blind_test.json` (100 curated synthetic tasks; `blind_test` is a legacy filename).
-- The fixture has 32 distinct task contexts. The same contexts appear in the development (21 shared contexts), validation (21), and calibration (22) partitions. It is not a blind or context-independent held-out evaluation.
+- At the time of this run the fixture (pre-0.2.0) had 32 distinct task contexts, shared with the development (21), validation (21), and calibration (22) partitions, so this run was not a blind or context-independent evaluation. The fixture has since been regenerated as a held-out partition; these figures were not re-measured on it.
 - The historical report describes the run as using live TypeSafe Jev inference. Raw per-task responses, exact model/provider identity, and a run manifest were not retained, so that claim and its outputs cannot be independently checked here.
 - The fixture generator describes synthetic scenario dates. They are not collection timestamps.
 - No production validation is included.

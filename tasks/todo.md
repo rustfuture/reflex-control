@@ -1293,6 +1293,30 @@ Mock sweep on the clean calibration partition:
 The currently frozen 0.28 / 0.38 produces a false accept on held-out data. Moving to 0.25 / 0.45 trades
 2.5 points of coverage for eliminating it.
 
+### Task 5 result: refit frozen configuration
+
+| Parameter | Old (seed, never fit) | New (sweep on held-out calibration split, mock provider) |
+| :--- | ---: | ---: |
+| `optimal_tau_accept` | 0.28 | 0.25 |
+| `clean_quality_accept_threshold` | 0.38 | 0.45 |
+| `max_risk_small_reasoner` | 0.58 | 0.58 (not swept) |
+| `mandatory_frontier_risk` | 0.70 | 0.70 (not swept) |
+
+Measured on `fixtures/v2_eval_calibration.json` (40 tasks):
+
+| tau / Q | False accepts | Frontier miss | Coverage |
+| :--- | ---: | ---: | ---: |
+| **0.25 / 0.45** (selected) | **0** | **8.33%** | **70.0%** |
+| 0.28 / 0.42 | 1 | 8.33% | 72.5% |
+| 0.28 / 0.38 (old frozen) | 1 | 8.33% | 72.5% |
+| 0.30 / 0.38 | 1 | 8.33% | 72.5% |
+| 0.32 / 0.35 | 1 | 8.33% | 72.5% |
+| 0.35 / 0.35 | 1 | 8.33% | 72.5% |
+
+The old frozen point produces 1 false accept on held-out data. The refit removes it at a cost of 2.5 points of
+autonomous coverage (72.5% → 70.0%). Both thresholds moved, and that movement is itself the finding: 0.28 / 0.38
+were the search's seed values surviving a sweep that never matched, not a fit.
+
 ### Findings from Task 5A review (not changed; recorded for follow-up)
 
 - **Selected point is on the grid boundary** (lowest tau, highest Q). The grid likely does not bracket the

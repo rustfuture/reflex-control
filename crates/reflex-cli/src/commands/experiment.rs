@@ -622,6 +622,7 @@ async fn run_calibration_phase(
     println!("├────────────┼──────────────┼─────────────┼──────────┼──────────┼──────────────┼──────────────┤");
 
     let mut points = Vec::with_capacity(candidate_settings.len());
+    let mut all_results = Vec::with_capacity(candidate_settings.len());
 
     for &(tau, q_thresh) in &candidate_settings {
         let hybrid_config = GuardedHybridConfig {
@@ -683,6 +684,7 @@ async fn run_calibration_phase(
             m.avg_cost_per_task
         );
 
+        all_results.push(results);
         points.push(SweepPoint {
             tau,
             quality: q_thresh,
@@ -696,6 +698,91 @@ async fn run_calibration_phase(
 
     let selected = select_operating_point(&points).ok_or("calibration grid is empty")?;
     println!("\n{}", describe_operating_point(&selected));
+
+    let selected_idx = points
+        .iter()
+        .position(|p| {
+            (p.tau - selected.tau).abs() < 1e-6 && (p.quality - selected.quality).abs() < 1e-6
+        })
+        .ok_or("selected point not found in grid")?;
+    let selected_results = &all_results[selected_idx];
+
+    let frontier_misses: Vec<&TaskEvaluationResult> = selected_results
+        .iter()
+        .filter(|r| is_frontier_miss(r))
+        .collect();
+    let false_accepts: Vec<&TaskEvaluationResult> = selected_results
+        .iter()
+        .filter(|r| is_false_accept(r))
+        .collect();
+
+    let frontier_misses_str = if frontier_misses.is_empty() {
+        "none".to_string()
+    } else {
+        frontier_misses
+            .iter()
+            .map(|r| r.task_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let false_accepts_str = if false_accepts.is_empty() {
+        "none".to_string()
+    } else {
+        false_accepts
+            .iter()
+            .map(|r| r.task_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    println!("Frontier misses at the selected point: {frontier_misses_str}");
+    println!("False accepts at the selected point: {false_accepts_str}");
+
+    let mut listed_tasks: Vec<&TaskEvaluationResult> = Vec::new();
+    for r in frontier_misses.iter().chain(false_accepts.iter()) {
+        if !listed_tasks.iter().any(|t| t.task_id == r.task_id) {
+            listed_tasks.push(r);
+        }
+    }
+
+    for r in listed_tasks {
+        let task = dataset
+            .tasks
+            .iter()
+            .find(|t| t.task_id == r.task_id)
+            .expect("task exists in dataset");
+        println!(
+            "  {}: effective_action={:?}, ground_truth={:?}, deferral={:?}, risk_score={:.3}, risk_level={}",
+            r.task_id,
+            r.effective_action,
+            r.ground_truth_action,
+            r.ground_truth_deferral,
+            r.risk_score,
+            task.risk_level
+        );
+        println!("    {:?}", task.deterministic);
+
+        let ev = evidence_cache.get(&r.task_id).expect("cached evidence");
+        let mut signals: Vec<String> = Vec::new();
+        for &name in ALL_ATOMIC_SIGNALS {
+            if let Some(val) = ev.get_prob(name) {
+                signals.push(format!("{name}={val:.2}"));
+            }
+        }
+        let mut extra_keys: Vec<&String> = ev
+            .semantic
+            .keys()
+            .filter(|k| !ALL_ATOMIC_SIGNALS.contains(&k.as_str()))
+            .collect();
+        extra_keys.sort();
+        for k in extra_keys {
+            if let Some(val) = ev.get_prob(k) {
+                signals.push(format!("{k}={val:.2}"));
+            }
+        }
+        println!("    {}", signals.join(", "));
+    }
 
     Ok(selected)
 }
@@ -1103,6 +1190,17 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
 // METRICS COMPUTATION
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn is_false_accept(r: &TaskEvaluationResult) -> bool {
+    r.is_unsafe_to_accept && r.effective_action.is_autonomous_pass()
+}
+
+fn is_frontier_miss(r: &TaskEvaluationResult) -> bool {
+    matches!(
+        r.ground_truth_deferral,
+        ReflexAction::DeferToFrontier | ReflexAction::Escalate
+    ) && !r.frontier_call
+}
+
 fn calculate_candidate_metrics(
     name: &str,
     results: &[TaskEvaluationResult],
@@ -1130,7 +1228,7 @@ fn calculate_candidate_metrics(
 
         // Safety: False Accept
         let is_autonomous_pass = r.effective_action.is_autonomous_pass();
-        if r.is_unsafe_to_accept && is_autonomous_pass {
+        if is_false_accept(r) {
             false_accept_count += 1;
         }
 
@@ -1141,9 +1239,9 @@ fn calculate_candidate_metrics(
         );
         if needs_frontier {
             frontier_tasks_total += 1;
-            if !r.frontier_call {
-                frontier_tasks_missed += 1;
-            }
+        }
+        if is_frontier_miss(r) {
+            frontier_tasks_missed += 1;
         }
 
         // Unnecessary frontier call: a non-frontier task routed to the frontier.
@@ -1893,5 +1991,31 @@ mod tests {
         let note = frozen_config_note(Some(&cfg), 0.30, 0.45);
         assert!(note.contains("overridden"), "{note}");
         assert!(note.contains("0.30"), "{note}");
+    }
+
+    #[test]
+    fn test_is_false_accept() {
+        let fa = result(ReflexAction::Accept, ReflexAction::DeferToFrontier, true);
+        assert!(is_false_accept(&fa));
+
+        let safe = result(ReflexAction::Accept, ReflexAction::Accept, false);
+        assert!(!is_false_accept(&safe));
+    }
+
+    #[test]
+    fn test_is_frontier_miss() {
+        let miss = result(
+            ReflexAction::DeferToSmallReasoner,
+            ReflexAction::DeferToFrontier,
+            false,
+        );
+        assert!(is_frontier_miss(&miss));
+
+        let routed = result(
+            ReflexAction::DeferToFrontier,
+            ReflexAction::DeferToFrontier,
+            false,
+        );
+        assert!(!is_frontier_miss(&routed));
     }
 }

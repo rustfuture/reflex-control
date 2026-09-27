@@ -39,11 +39,11 @@ pub struct ExperimentArgs {
     #[arg(long, default_value = "jev")]
     pub provider: String,
 
-    /// Override risk threshold tau_accept
+    /// Risk threshold tau_accept. With --phase freeze: frozen manually (requires --quality-threshold). With --phase evaluation: overrides the frozen value for this run only, and the report notes the override. Rejected by --phase all
     #[arg(long)]
     pub risk_threshold: Option<f64>,
 
-    /// Clean-quality acceptance threshold theta_clean for --phase freeze (requires --risk-threshold); ignored by other phases
+    /// Clean-quality acceptance threshold theta_clean for --phase freeze (requires --risk-threshold). Ignored by --phase evaluation, which uses the frozen value. Rejected by --phase all
     #[arg(long)]
     pub quality_threshold: Option<f64>,
 
@@ -222,6 +222,9 @@ pub async fn execute(args: ExperimentArgs) -> Result<(), Box<dyn std::error::Err
         "all" => {
             if args.dataset.is_some() {
                 return Err("--dataset cannot be used with --phase all: every phase would read the same file, so calibration and evaluation would share data".into());
+            }
+            if args.risk_threshold.is_some() || args.quality_threshold.is_some() {
+                return Err("--risk-threshold and --quality-threshold cannot be used with --phase all: it freezes the swept thresholds, so an override would make the evaluated thresholds differ from the frozen ones. Run --phase freeze and --phase evaluation separately instead".into());
             }
             println!(
                 "\n>>> Starting Evaluation Protocol (DEV -> VAL -> CAL -> FREEZE -> EVALUATION)..."
@@ -759,7 +762,7 @@ const DEFAULT_EVAL_THRESHOLDS: (f64, f64) = (0.28, 0.38);
 
 async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
-    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS)");
+    println!(" PHASE 4: EVALUATION (CURATED SYNTHETIC TASKS)");
     println!("==========================================================================");
 
     let frozen_file = "fixtures/frozen_hybrid_config.json";
@@ -1076,7 +1079,10 @@ async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::
     );
 
     println!("\n==========================================================================");
-    println!(" FINAL COMPARATIVE BENCHMARK REPORT (100 EVALUATION TASKS)");
+    println!(
+        " FINAL COMPARATIVE BENCHMARK REPORT ({} EVALUATION TASKS)",
+        dataset.tasks.len()
+    );
     println!("==========================================================================");
     print_comparison_table(&[ma.clone(), mb.clone(), mc.clone(), me.clone()]);
 

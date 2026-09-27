@@ -5,6 +5,7 @@ All notable changes to Reflex Control are documented here.
 ## Unreleased
 
 - Surfaced threshold freeze provenance in the generated evaluation report: the report now states whether thresholds were loaded from `fixtures/frozen_hybrid_config.json` (recording freeze timestamp, threshold values, and the calibration sweep's validation notes quoted verbatim) or fell back to built-in defaults (recording that they are not from a calibration sweep), and explicitly notes when `tau_accept` was overridden via `--risk-threshold`.
+- `reflex experiment --phase all` now rejects `--risk-threshold` and `--quality-threshold`. Previously the sweep froze its own thresholds and the evaluation phase then applied `--risk-threshold` as an override, so the evaluated tau could differ from the frozen one while `--quality-threshold` was ignored. The flags' help text now states which phases read them, and the evaluation banners no longer claim 100 tasks regardless of the dataset.
 
 ## 0.2.0 - 2026-09-27
 

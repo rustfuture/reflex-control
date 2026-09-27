@@ -4,7 +4,7 @@ This directory preserves historical research around Candidate E, the Guarded Hyb
 
 ## Candidate E aggregate report
 
-[`live_experiment_hybrid_results.md`](live_experiment_hybrid_results.md) preserves the aggregate figures previously reported for `fixtures/v2_eval_blind_test.json`. That filename is retained for compatibility, but the fixture is not blind: its 100 tasks contain 32 distinct contexts, with 21, 21, and 22 contexts shared with development, validation, and calibration, respectively.
+[`live_experiment_hybrid_results.md`](live_experiment_hybrid_results.md) preserves the aggregate figures previously reported for `fixtures/v2_eval_blind_test.json`. That filename is retained for compatibility. At the time of that run the fixture's 100 tasks held only 32 distinct contexts, with 21, 21, and 22 shared with development, validation, and calibration respectively, so the run was not blind or context-independent. Since 0.2.0 the fixture has been regenerated so the evaluation partition shares no context with any other split (enforced in CI by `crates/reflex-calibration/tests/fixture_integrity.rs`), but the historical figures below have not been re-measured on it.
 
 The historical report records live Jev inference, but the repository does not retain per-task predictions, raw responses, or a run manifest. The reported metrics therefore cannot be independently reproduced from this checkout. The report labels its denominators explicitly and calculates conditional confidence bounds without treating zero observed events as zero risk.
 

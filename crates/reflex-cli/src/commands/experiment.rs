@@ -749,12 +749,12 @@ async fn run_freeze_step(args: &ExperimentArgs) -> Result<(), Box<dyn std::error
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. EVALUATION PHASE (LEGACY `blind` NAME; CONTEXTS RECUR ACROSS PARTITIONS)
+// 4. EVALUATION PHASE (LEGACY `blind` NAME)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn run_evaluation_phase(args: &ExperimentArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==========================================================================");
-    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS; NOT BLIND OR HELD-OUT)");
+    println!(" PHASE 4: EVALUATION (100 CURATED SYNTHETIC TASKS)");
     println!("==========================================================================");
 
     let frozen_file = "fixtures/frozen_hybrid_config.json";
@@ -1443,7 +1443,7 @@ fn save_markdown_artifact(
     md.push_str("**Evaluation Dataset**: 100 curated synthetic tasks (`fixtures/v2_eval_blind_test.json`; legacy filename)\n\n");
     md.push_str(&format!("**Provider mode**: `{provider}`\n\n"));
     md.push_str(
-        "> This is a generated experimental report, not production validation. The fixture reuses task contexts across its partitions, so this is not a blind or independent held-out evaluation. Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
+        "> This is a generated experimental report, not production validation. The evaluation partition shares no task context with the development, validation, or calibration partitions, but it is curated synthetic data. Zero observed errors do not prove zero risk. FAR is false accepts divided by autonomous accepts/terminations; frontier-miss rate is missed frontier-required tasks divided by all frontier-required tasks; unnecessary frontier-call rate is frontier calls on non-frontier tasks divided by all non-frontier tasks. Autonomous action coverage includes accept/terminate/retry/continue actions; frontier calls avoided is reported separately.\n\n",
     );
     md.push_str("### 1. Comparative Performance Matrix\n\n");
     md.push_str("| Metric ");

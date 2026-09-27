@@ -6,21 +6,21 @@ This directory contains evaluation fixtures and frozen benchmark configurations 
 
 ## 1. V2 Curated Synthetic Evaluation Fixtures
 
-These generated task fixtures are reproducible with `docs/experiments/generate_v2_datasets.py`. Task contexts are sampled from a small set of templates and recur across partitions; these partitions are not independent or blind test sets.
+These generated task fixtures are reproducible with `docs/experiments/generate_v2_datasets.py`. Each partition draws from its own disjoint slice of the template pool, so no task context appears in more than one partition.
 
 | File | Purpose | Size | Synthetic Scenario Span |
 | :--- | :--- | :---: | :--- |
 | `v2_eval_dev.json` | Connectivity, token counting, atomic signal parsing verification | 30 tasks | 2026-09-18 to 2026-09-21 |
 | `v2_eval_validation.json` | Candidate E (Guarded Hybrid) vs Candidate C (Rules) comparison | 30 tasks | 2026-09-22 to 2026-09-25 |
 | `v2_eval_calibration.json` | Systematic grid sweep of $\tau_{\text{accept}}$ and quality threshold $\theta_{\text{clean}}$ | 40 tasks | 2026-09-26 to 2026-09-29 |
-| `v2_eval_blind_test.json` | Evaluation partition (legacy filename; context templates recur across other partitions) | 100 tasks | 2026-09-30 to 2026-10-05 |
+| `v2_eval_blind_test.json` | Held-out evaluation partition (legacy filename; no context shared with other partitions) | 100 tasks | 2026-09-30 to 2026-10-05 |
 
-The 100-task evaluation fixture contains 32 distinct contexts. It shares 21 contexts with development, 21 with validation, and 22 with calibration. A historical report describes live Jev inference, but per-task predictions and a run manifest are not checked in, so that run is not independently reproducible from this repository.
+The four partitions hold disjoint task contexts: 200 records over 200 distinct contexts, with no context repeated inside a partition and none shared between partitions. This is enforced by `crates/reflex-calibration/tests/fixture_integrity.rs`, which runs in CI, so the property cannot regress silently. The corpus remains curated synthetic data: it establishes that the evaluation partition is held out, not that the policy performs as measured in production. A historical report describes live Jev inference on the pre-0.2.0 corpus, but per-task predictions and a run manifest are not checked in, so that run is not independently reproducible from this repository.
 
 ### Active Frozen Configuration
-- `frozen_hybrid_config.json`: The v0.1 default configuration frozen after calibration, specifying:
-  - `optimal_tau_accept`: 0.28
-  - `clean_quality_accept_threshold`: 0.38
+- `frozen_hybrid_config.json`: The 0.2.0 configuration refit on the held-out calibration partition, specifying:
+  - `optimal_tau_accept`: 0.25
+  - `clean_quality_accept_threshold`: 0.45
   - `max_risk_small_reasoner`: 0.58
   - `mandatory_frontier_risk`: 0.70
 

@@ -2,6 +2,15 @@
 
 All notable changes to Reflex Control are documented here.
 
+## 0.2.0 - 2026-09-27
+
+- Partitioned the v2 evaluation corpus into disjoint context slices so the evaluation partition is genuinely held out. Previously all four splits sampled one 34-template pool, and 30 of the 32 distinct contexts in the evaluation partition also appeared in another split.
+- Expanded the task template pool from 34 to 200 so each of the 200 records carries a unique context.
+- Added `crates/reflex-calibration/tests/fixture_integrity.rs`, which asserts split disjointness, intra-split uniqueness, and the 200-context total in CI.
+- Fixed the calibration sweep: it returned its seed values (0.28 / 0.38) because no grid point met its strict zero-error rule, and it printed "0 False Accepts, 0 frontier misses" as literal text. It now selects lexicographically (false accepts, frontier misses, coverage) and reports the selected point's measured counts, warning when it is not error-free.
+- Changed `reflex experiment --phase freeze`: with no thresholds it now runs the calibration sweep and freezes the selected point, recording the dataset, provider and measured counts in `validation_notes` (previously it silently wrote 0.28 / 0.38). With `--risk-threshold` and the new `--quality-threshold` it records a manual override; with only one of them it errors. Because `--provider` defaults to `jev`, a bare `--phase freeze` now calls the live API — pass `--provider mock` for an offline run.
+- Refit the frozen configuration on the held-out calibration partition: tau_accept 0.25, quality threshold 0.45.
+
 ## 0.1.1 - 2026-09-23
 
 - Corrected calibration metric denominators: accuracy and Brier score are now computed over resolved outcomes only, and `CalibrationMetrics` reports `resolved_samples` and `unresolved_samples` alongside `total_samples`.

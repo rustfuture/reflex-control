@@ -10,6 +10,7 @@ members = [
     "crates/reflex-cli",
     "examples/verifier-gate",
     "examples/shadow-mode",
+    "examples/agent-runtime-gate",
 ]
 
 [workspace.package]

@@ -238,6 +238,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-agent-runtime-gate"
+version = "0.3.0"
+dependencies = [
+ "reflex-core",
+ "reflex-policy",
+ "reflex-provider",
+ "tokio",
+]
+
+[[package]]
 name = "example-shadow-mode"
 version = "0.3.0"
 dependencies = [

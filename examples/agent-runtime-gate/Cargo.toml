@@ -1,0 +1,14 @@
+[package]
+name = "example-agent-runtime-gate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reflex-core = { workspace = true }
+reflex-provider = { workspace = true }
+reflex-policy = { workspace = true }
+tokio = { workspace = true }

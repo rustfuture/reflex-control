@@ -10,7 +10,7 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
 - Tunes acceptance thresholds across labeled tasks with statistical confidence intervals.
-- Logs runtime choices, shadow decisions, costs, and latencies to SQLite without blocking execution.
+- Logs runtime choices, shadow decisions, costs, and latencies to SQLite (synchronous writes on the calling thread).
 - Includes a CLI to evaluate tasks offline, run calibration sweeps, and inspect telemetry.
 
 ## Quick start

@@ -35,6 +35,14 @@ const PRE_TOOL_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 const PRE_TOOL_COMMAND: &str = "reflex hook claude-code pre-tool";
 const STOP_COMMAND: &str = "reflex hook claude-code stop";
 
+/// One hook to install: event, matcher (if the event takes one), command, timeout in seconds.
+pub(super) type HookSpec = (&'static str, Option<&'static str>, &'static str, u64);
+
+const HOOK_SPECS: [HookSpec; 2] = [
+    ("PreToolUse", Some(PRE_TOOL_MATCHER), PRE_TOOL_COMMAND, 10),
+    ("Stop", None, STOP_COMMAND, 600),
+];
+
 /// Fields Claude Code sends that we look at. Everything else is ignored.
 #[derive(Debug, Deserialize)]
 struct Payload {
@@ -146,7 +154,7 @@ impl AgentAdapter for ClaudeCode {
         let path = settings_path(ctx)?;
         let before = existing.get(&path);
         let mut root = parse_settings(&path, before)?;
-        merge_hooks(&path, &mut root)?;
+        merge_hooks(&path, &mut root, &HOOK_SPECS)?;
         let after = render_settings(&root);
         let mut plan = Plan::default();
         if before.map(String::as_str) != Some(after.as_str()) {
@@ -219,7 +227,7 @@ fn settings_path(ctx: &PlanCtx) -> Result<PathBuf, InstallError> {
     Ok(base.join(".claude").join("settings.json"))
 }
 
-fn parse_settings(
+pub(super) fn parse_settings(
     path: &std::path::Path,
     text: Option<&String>,
 ) -> Result<Map<String, Value>, InstallError> {
@@ -239,45 +247,46 @@ fn parse_settings(
     }
 }
 
-fn render_settings(root: &Map<String, Value>) -> String {
+pub(super) fn render_settings(root: &Map<String, Value>) -> String {
     let mut text = serde_json::to_string_pretty(root).expect("a JSON map always serializes");
     text.push('\n');
     text
 }
 
-fn is_our_command(hook: &Value) -> bool {
+pub(super) fn is_our_command(hook: &Value) -> bool {
     hook.get("command")
         .and_then(Value::as_str)
         .is_some_and(|c| c.trim_start().starts_with(HOOK_COMMAND_PREFIX))
 }
 
-fn group_has_ours(group: &Value) -> bool {
+pub(super) fn group_has_ours(group: &Value) -> bool {
     group
         .get("hooks")
         .and_then(Value::as_array)
         .is_some_and(|hooks| hooks.iter().any(is_our_command))
 }
 
-fn shape_err(path: &std::path::Path, what: &str) -> InstallError {
+pub(super) fn shape_err(path: &std::path::Path, what: &str) -> InstallError {
     InstallError::UnexpectedShape {
         path: path.to_path_buf(),
         message: format!("{what} has an unexpected type; fix it and run install again"),
     }
 }
 
-/// Adds or updates our two hooks, keeping everything else.
-fn merge_hooks(path: &std::path::Path, root: &mut Map<String, Value>) -> Result<(), InstallError> {
+/// Adds or updates our hooks, keeping everything else. The `hooks` object of Codex's
+/// `hooks.json` has the same shape, so its adapter shares this.
+pub(super) fn merge_hooks(
+    path: &std::path::Path,
+    root: &mut Map<String, Value>,
+    specs: &[HookSpec],
+) -> Result<(), InstallError> {
     let hooks = root
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()))
         .as_object_mut()
         .ok_or_else(|| shape_err(path, "\"hooks\""))?;
 
-    let specs: [(&str, Option<&str>, &str, u64); 2] = [
-        ("PreToolUse", Some(PRE_TOOL_MATCHER), PRE_TOOL_COMMAND, 10),
-        ("Stop", None, STOP_COMMAND, 600),
-    ];
-    for (event, matcher, command, timeout) in specs {
+    for &(event, matcher, command, timeout) in specs {
         let groups = hooks
             .entry(event)
             .or_insert_with(|| Value::Array(Vec::new()))
@@ -341,7 +350,7 @@ fn merge_hooks(path: &std::path::Path, root: &mut Map<String, Value>) -> Result<
 }
 
 /// Removes our hooks and anything left empty by that. Returns whether anything changed.
-fn remove_hooks(
+pub(super) fn remove_hooks(
     path: &std::path::Path,
     root: &mut Map<String, Value>,
 ) -> Result<bool, InstallError> {

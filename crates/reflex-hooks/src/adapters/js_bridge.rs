@@ -26,6 +26,7 @@
 //! shape (a warning on stderr with empty stdout is what a malformed request produces),
 //! the plugin allows.
 
+use super::util::resolve_paths;
 use super::{HookEvent, HookInput, ParseError, Rendered};
 use crate::guard::Verdict;
 use serde_json::{json, Value};
@@ -45,9 +46,12 @@ pub fn parse(
     let text = |key: &str| request.get(key).and_then(Value::as_str);
     let cwd = text("cwd").filter(|c| !c.is_empty()).map(PathBuf::from);
     let event = match event {
-        "pre-tool" => classify(
-            text("tool").unwrap_or(""),
-            request.get("args").unwrap_or(&Value::Null),
+        "pre-tool" => resolve_paths(
+            classify(
+                text("tool").unwrap_or(""),
+                request.get("args").unwrap_or(&Value::Null),
+            ),
+            text("cwd"),
         ),
         "turn-end" => HookEvent::TurnEnd {
             session_id: text("session_id").unwrap_or("").to_string(),

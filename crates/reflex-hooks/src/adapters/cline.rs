@@ -44,7 +44,8 @@
 //! ignores hooks in `--yolo` mode. A file that is not ours at the same path is left
 //! alone, because Cline runs one file per event.
 
-use super::util::{self, ManagedFile};
+use super::codex::patch_paths;
+use super::util::{self, resolve_paths, ManagedFile};
 use super::{AgentAdapter, HookEvent, HookInput, ParseError, Probe, Rendered};
 use crate::config::Scope;
 use crate::guard::Verdict;
@@ -173,7 +174,7 @@ fn classify(tool: &str, input: &Value) -> HookEvent {
         }
         "apply_patch" => {
             let paths = patch_text(input)
-                .map(|patch| util::patch_paths(&patch))
+                .map(|patch| patch_paths(&patch))
                 .unwrap_or_default();
             if paths.is_empty() {
                 HookEvent::Ignore
@@ -241,6 +242,7 @@ impl AgentAdapter for Cline {
             Some((tool, input)) => classify(tool, input.unwrap_or(&Value::Null)),
             None => HookEvent::Ignore,
         };
+        let event = resolve_paths(event, cwd.as_deref().and_then(|c| c.to_str()));
         Ok(HookInput { cwd, event })
     }
 

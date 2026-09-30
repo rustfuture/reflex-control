@@ -9,6 +9,8 @@
 //!   touched, and the plan says what to add by hand instead
 //! * uninstall deletes the file only if it is ours
 
+use super::codex::resolve;
+use super::HookEvent;
 use crate::install::{FileChange, Files, Plan};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -76,27 +78,16 @@ pub fn string_field(input: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
-/// The files a patch in the `*** Begin Patch` format touches: the `Add File`, `Update
-/// File`, `Delete File` and `Move to` headers. Used by OpenCode, Kilo Code and Cline,
-/// whose `apply_patch` tools take this format.
-pub fn patch_paths(patch: &str) -> Vec<String> {
-    const HEADERS: [&str; 4] = [
-        "*** Add File:",
-        "*** Update File:",
-        "*** Delete File:",
-        "*** Move to:",
-    ];
-    patch
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim_end();
-            HEADERS
-                .iter()
-                .find_map(|h| line.strip_prefix(h))
-                .map(|p| p.trim().to_string())
-                .filter(|p| !p.is_empty())
-        })
-        .collect()
+/// Makes the paths of a file-writing event absolute against `cwd`, the way the agent
+/// resolves them: `secrets/a` written from `app/` is `app/secrets/a`, which the
+/// root-relative pattern `secrets/**` must not match.
+pub fn resolve_paths(event: HookEvent, cwd: Option<&str>) -> HookEvent {
+    match event {
+        HookEvent::PreWrite { paths } => HookEvent::PreWrite {
+            paths: paths.into_iter().map(|p| resolve(cwd, p)).collect(),
+        },
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -104,14 +95,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn patch_paths_reads_every_header() {
-        let patch = "*** Begin Patch\r\n*** Add File: a.txt\n+hi\n*** Update File: src/b.rs\n\
-                     *** Move to: src/c.rs\n@@\n-x\n+y\n*** Delete File: .env\n*** End Patch\n";
+    fn relative_paths_are_resolved_against_the_agents_directory() {
+        let write = |p: &str| HookEvent::PreWrite {
+            paths: vec![p.to_string()],
+        };
         assert_eq!(
-            patch_paths(patch),
-            ["a.txt", "src/b.rs", "src/c.rs", ".env"]
+            resolve_paths(write("secrets/a"), Some("/work/proj/app")),
+            write("/work/proj/app/secrets/a")
         );
-        assert!(patch_paths("just text\n*** Update File:\n").is_empty());
+        assert_eq!(resolve_paths(write("/etc/x"), Some("/w")), write("/etc/x"));
+        assert_eq!(resolve_paths(write("a"), None), write("a"));
+        let shell = HookEvent::PreShell {
+            command: "ls".into(),
+        };
+        assert_eq!(resolve_paths(shell.clone(), Some("/w")), shell);
     }
 
     #[test]

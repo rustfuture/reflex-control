@@ -75,8 +75,9 @@ fn command_field(input: &Option<Value>) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
-/// Files an `apply_patch` patch adds, updates, deletes or moves to.
-fn patch_paths(patch: &str) -> Vec<String> {
+/// Files an `apply_patch` patch adds, updates, deletes or moves to. OpenCode, Kilo Code and
+/// Cline take the same patch format, so their adapters use this too.
+pub(super) fn patch_paths(patch: &str) -> Vec<String> {
     const MARKERS: [&str; 4] = [
         "*** Add File: ",
         "*** Update File: ",
@@ -108,7 +109,7 @@ fn is_absolute(path: &str) -> bool {
 }
 
 /// Patch paths are relative to the session's directory; make them absolute when it is known.
-fn resolve(cwd: Option<&str>, path: String) -> String {
+pub(super) fn resolve(cwd: Option<&str>, path: String) -> String {
     match cwd.map(|c| c.trim_end_matches(['/', '\\'])) {
         Some(dir) if !dir.is_empty() && !is_absolute(&path) => format!("{dir}/{path}"),
         _ => path,

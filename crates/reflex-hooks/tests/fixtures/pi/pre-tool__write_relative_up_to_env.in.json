@@ -1,0 +1,9 @@
+{
+  "cwd": "/work/proj/app",
+  "session_id": "ses_1",
+  "tool": "write",
+  "args": {
+    "path": "../.env",
+    "content": "x"
+  }
+}

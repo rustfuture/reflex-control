@@ -58,6 +58,10 @@ Turn end means "the agent stopped and wants to hand control back".
 | `git commit` and `git.run_tests` is on and tests fail            | Commit refused, test output shown                 |
 | Reflex itself breaks (bad JSON, unreadable config, no git)       | Warning on stderr, everything allowed             |
 
+The table is what Reflex decides; each agent decides how much of it can be carried out.
+Cline cannot run tests at turn end at all, and OpenCode, Kilo Code and Cline have no way to
+ask you to confirm a command (see their sections below).
+
 Details worth knowing:
 
 - Tests are skipped when the working tree is identical to the last check that did not
@@ -224,6 +228,156 @@ enforcement is in the current source and has a test, but which released version 
 not checked. Test with your version: ask Codex to edit `.env` and see the edit refused.
 Nothing was run against a real Codex either.
 
+### OpenCode
+
+Installs one plugin file: `.opencode/plugins/reflex.js` (this project) or
+`~/.config/opencode/plugins/reflex.js` (all your projects; `XDG_CONFIG_HOME` is not
+consulted). OpenCode loads every file in those directories at startup, so restart it after
+installing. Nothing else is changed, and `reflex uninstall` deletes only that file.
+
+The plugin is a short JS file that lives inside the `reflex` binary (source:
+`integrations/opencode/reflex.js`; no npm dependencies). It runs in OpenCode's own process
+and only relays: it sends each tool call to `reflex hook opencode pre-tool` and each idle
+session to `reflex hook opencode turn-end`, and applies the JSON verdict that comes back.
+The decisions are made by `reflex`. If `reflex` is missing, takes longer than 10 s (10 min
+at turn end, where it runs the tests) or answers with anything unexpected, the plugin
+allows. It starts `reflex` as a child process without waiting on it, so OpenCode stays
+responsive while the tests run.
+
+- `write`, `edit`, `multiedit` and `apply_patch` (the files named in the patch): a write to
+  a protected path is refused by throwing, and the reason goes to the model.
+- `bash`: a command that writes to a protected path is refused the same way.
+- **Risky commands cannot be confirmed.** OpenCode has no confirmation prompt for plugins.
+  A command that would ask you (force push, `rm -rf /`) is refused once, with a message
+  telling the agent to ask you first; if the agent then repeats exactly the same call, it
+  goes through. That is weaker than Claude Code's prompt: the agent could repeat the call
+  without asking you.
+- Turn end is the `session.idle` event. When the tests fail, the failure output is sent
+  to the session as a new message (`client.session.promptAsync`) and the agent keeps
+  working, up to `tests.max_retries` times. When it is out of tries, or for a large change,
+  the message goes to OpenCode's log and, in the terminal UI, a toast.
+- Not checked at turn end: subagent sessions (the parent is checked instead) and a session
+  whose last run ended in an error.
+- Cannot see reads, or what MCP and custom tools do. The shell check has the limits listed
+  under Claude Code.
+
+**Verified against the OpenCode source** (`sst/opencode`, `dev` as of 2026-09-30): the
+plugin directories; that files there load as modules whose default export is `{ id,
+server }`; the `tool.execute.before` hook and that a throw refuses the call; the tool ids
+and arguments (`write` and `edit` with `filePath`, `apply_patch` with `patchText` in the
+`*** Update File:` format, `bash` with `command`); the `session.idle`, `session.error` and
+`session.status` events; and `client.session.get`, `client.session.promptAsync`,
+`client.app.log` and `client.tui.showToast` in the SDK. The `permission.ask` hook is
+declared there but nothing calls it, which is why there is no confirmation.
+
+**Not verified.** The plugin has been run only against a fake `reflex` and a stand-in for
+OpenCode's plugin API (under Node and Bun), never inside a real OpenCode. Assumed:
+- versions from before the `{ id, server }` module shape (about March 2026) may not load
+  the file;
+- `multiedit` and `patch` are tool names from older versions and are not in the current
+  source; they are checked in case a version still uses them;
+- that a `session.idle` after you press Esc is skipped because OpenCode also reports an
+  error for that stop; if it does not, the tests run after a stop too;
+- that sending a message from inside the idle event starts a new run cleanly.
+
+### Kilo Code
+
+Kilo Code is a fork of OpenCode and uses the same plugin, installed for Kilo:
+`.kilo/plugin/reflex.js` (this project) or `~/.config/kilo/plugin/reflex.js` (all your
+projects). Kilo does not read `.opencode/`. Its VS Code extension runs the Kilo CLI, and
+Kilo's documentation says plugins work in both. Restart Kilo after installing. Everything
+under OpenCode applies, with `reflex hook kilo ...` as the command.
+
+**Verified** in the Kilo source (`Kilo-Org/kilocode`, as of 2026-09-30) and its plugin
+documentation: the plugin directories (`plugin/` or `plugins/` inside `.kilo/`, the older
+`.kilocode/` and `~/.config/kilo/`), the `{ id, server }` module shape that its
+documentation asks for local files, the same hooks, tool ids and SDK calls as OpenCode.
+**Not verified:** nothing was run in Kilo, and the JetBrains extension was not checked.
+
+### Cline
+
+Installs one hook script, `PreToolUse`: `.clinerules/hooks/PreToolUse` (this project) or
+`~/Documents/Cline/Hooks/PreToolUse` (all your projects). On Windows the file is
+`PreToolUse.ps1`, which Cline runs through PowerShell. It is a few lines that run
+`reflex hook cline pre-tool`. The VS Code extension and the Cline CLI both read these
+locations (the CLI also reads `.cline/hooks`, which is left alone so that the hook does not
+run twice).
+
+**Turn on hooks.** Cline runs hooks only when they are enabled: in VS Code, tick "Enable
+Hooks" in Cline's settings (Feature Settings). The CLI runs them unless started with
+`--yolo` (as Cline's hook README says). `reflex install` prints this reminder; `reflex doctor` only shows that the file
+is in place.
+
+- `editor` (and the older `write_to_file`, `replace_in_file`, `delete_file`) and
+  `apply_patch` (the files named in the patch): a write to a protected path is cancelled.
+- `run_commands` (and the older `execute_command`): a command that writes to a protected
+  path is cancelled. Every command in the call is checked.
+- **Cancelling ends the task run.** Cline stops the tool call and the current run, and shows
+  the reason; you have to send Cline another message to go on.
+- **Risky commands cannot be confirmed.** Cline's reply format has a `review` field that is
+  supposed to ask you, but the CLI reads it and does nothing with it, and the extension's
+  format has no such field. A command that would ask you (force push, `rm -rf /`) is
+  therefore cancelled, with a message saying so; run it yourself if you want it.
+- **No tests at the end of a task.** Cline's `TaskComplete` hook runs after the task has
+  finished and its reply is ignored, so a hook cannot send the agent back to fix failing
+  tests. `reflex install` therefore installs no turn-end hook for Cline. Add the Git
+  pre-commit hook: it runs the tests before any commit, whichever tool makes it.
+- Cannot see reads, other tools or MCP. The `apply_patch` call of the VS Code extension
+  carries its patch only in the tool's input; if Cline passes that as a bare string the
+  extension's hook payload has no parameters, and the patch is not checked. The shell
+  check has the limits listed under Claude Code.
+- Cline runs one file per event and directory. If a `PreToolUse` of yours is already
+  there, it is not changed; call `reflex hook cline pre-tool` from it instead (it reads
+  Cline's JSON on stdin and prints the reply).
+- The extension stops a hook after 30 s, the CLI after 120 s; the check itself takes a
+  moment.
+
+**Verified against the Cline source** (`cline/cline`, `main` as of 2026-09-30): the hook
+directories and file names for the CLI, the extension and both operating systems; that a
+hook file is run with the event as JSON on stdin; both payload shapes (`tool_call.name` and
+`tool_call.input` for the CLI, `preToolUse.toolName` and `preToolUse.parameters`, with
+non-string values JSON-encoded, for the extension); the tool names and their input shapes;
+`cancel` and `errorMessage` stopping the run; `review` being parsed but ignored; and
+`TaskComplete` / `agent_end` being observe-only.
+
+**Not verified.** Nothing was run in Cline. The Windows script was not run at all, not even
+under PowerShell. Reading the hook's stdin as text under Windows PowerShell 5.1 uses the
+console code page, so non-ASCII paths may be misread there.
+
+### pi
+
+Installs one extension file: `.pi/extensions/reflex.ts` (this project; pi loads project
+extensions only after you have trusted the project) or `~/.pi/agent/extensions/reflex.ts`
+(all your projects; `PI_CODING_AGENT_DIR` is not consulted). Restart pi or run `/reload`.
+The file is a short plain-JS extension inside the `reflex` binary (source:
+`integrations/pi/reflex.ts`, no dependencies) that relays to `reflex hook pi pre-tool` and
+`reflex hook pi turn-end`, with the same fail-open rules and child process as the OpenCode
+plugin. Every handler catches its own errors, because pi blocks a tool whose `tool_call`
+handler throws.
+
+- `write` and `edit`: a write to a protected path is blocked, with the reason.
+- `bash` and `powershell`: a command that writes to a protected path is blocked; a risky
+  one opens pi's own confirmation dialog (and is blocked when pi has no UI, as in print
+  mode).
+- Turn end is `agent_before_settle`, for runs that completed. When the tests fail, the
+  failure output is added as a message and pi makes one more model request, up to
+  `tests.max_retries` times in total. When it is out of tries, or for a large change, you get
+  a notification.
+- Cannot see reads or other tools. The shell check has the limits listed under Claude Code.
+
+**Verified against the pi source** (`badlogic/pi-mono`, `main` as of 2026-09-30): the
+extension directories and that a default-exported factory is loaded from a `.ts` file; the
+`tool_call` event, `{ block, reason }` and the failure-blocks rule; `agent_before_settle`,
+its `outcome`, and that a handler's `entries` replace the list (so the extension returns the
+existing entries plus its own) and `continue: true` requests one more request; the
+`custom_message` entry shape; the tool names and arguments (`path`, `command`); and
+`ctx.cwd`, `ctx.hasUI`, `ctx.ui.confirm` and `ctx.ui.notify`.
+
+**Not verified.** The extension has only run against a fake `reflex` and a stand-in for pi's
+API under Node, not inside pi. Assumed: that a `custom_message` entry reaches the model as
+a user message on the continued request (the source says custom messages are sent to the
+model, but this was not run), and that jiti loads the file as written.
+
 ### Git pre-commit
 
 Installs `.git/hooks/pre-commit` (or the directory `core.hooksPath` points to). It
@@ -258,6 +412,10 @@ is the git hook's deliberate refusal.
 | `.claude/settings.json` (or `~/.claude/`) | our hook entries merged in, everything else kept                |
 | `.cursor/hooks.json` (or `~/.cursor/`)   | our hook entries merged in, everything else kept                |
 | `.codex/hooks.json` (or `~/.codex/`)     | our hook entries merged in, everything else kept                |
+| `.opencode/plugins/reflex.js` (or `~/.config/opencode/plugins/`) | one plugin file, created or updated     |
+| `.kilo/plugin/reflex.js` (or `~/.config/kilo/plugin/`) | one plugin file, created or updated               |
+| `.clinerules/hooks/PreToolUse` (or `~/Documents/Cline/Hooks/`; `.ps1` on Windows) | one hook script, created or updated |
+| `.pi/extensions/reflex.ts` (or `~/.pi/agent/extensions/`) | one extension file, created or updated        |
 | `.git/hooks/pre-commit`                  | created, or an existing hook chained as above                   |
 | `.gitignore`                             | `.reflex/` and `*.reflex-bak` appended (project scope)          |
 
@@ -265,6 +423,11 @@ Files that are rewritten are copied to `<file>.reflex-bak` first, once. Installi
 changes nothing the second time. `reflex uninstall` removes only our hook entries and
 files, and deletes a settings file that ends up empty; it leaves `.reflex.toml` and
 `.gitignore` alone.
+
+The plugin, extension and script files of OpenCode, Kilo Code, Cline and pi are wholly
+ours and carry a `reflex-control managed hook` line in their header. Install updates such a
+file to the current version; a file of yours at the same path is never overwritten (the
+install says what to add to it by hand); uninstall deletes only files with that line.
 
 ## About the decision engine
 

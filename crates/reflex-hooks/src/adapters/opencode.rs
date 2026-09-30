@@ -27,6 +27,7 @@
 //! Not run for subagent sessions (checked through `parentID`), for sessions whose last
 //! run ended in an error, or while another check of the same session is running.
 
+use super::codex::patch_paths;
 use super::js_bridge;
 use super::util::{self, ManagedFile};
 use super::{AgentAdapter, HookEvent, HookInput, ParseError, Probe, Rendered};
@@ -101,7 +102,7 @@ fn classify(tool: &str, args: &Value) -> HookEvent {
             .map(|p| vec![p])
             .unwrap_or_default(),
         "apply_patch" | "patch" => util::string_field(args, &["patchText"])
-            .map(|patch| util::patch_paths(&patch))
+            .map(|patch| patch_paths(&patch))
             .unwrap_or_default(),
         "bash" => {
             return match util::string_field(args, &["command"]) {

@@ -1,0 +1,26 @@
+{
+  "hookName": "tool_call",
+  "clineVersion": "1.0.0",
+  "timestamp": "2026-01-15T10:30:00Z",
+  "taskId": "conv-123",
+  "workspaceRoots": [
+    "/work/proj/app"
+  ],
+  "userId": "user",
+  "iteration": 1,
+  "tool_call": {
+    "id": "call-1",
+    "name": "editor",
+    "input": {
+      "path": "../.env",
+      "new_text": "x"
+    }
+  },
+  "preToolUse": {
+    "toolName": "editor",
+    "parameters": {
+      "path": "../.env",
+      "new_text": "x"
+    }
+  }
+}

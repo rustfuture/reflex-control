@@ -1,0 +1,12 @@
+{
+  "conversation_id": "conv-1",
+  "generation_id": "gen-1",
+  "model": "default",
+  "hook_event_name": "stop",
+  "cursor_version": "1.7.0",
+  "workspace_roots": [
+    "/work/proj"
+  ],
+  "status": "completed",
+  "loop_count": 2
+}

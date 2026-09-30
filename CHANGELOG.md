@@ -2,6 +2,12 @@
 
 All notable changes to Reflex Control are documented here.
 
+## Unreleased
+
+- `reflex run` now rejects an unrecognised `--risk` value instead of silently treating it as `low`, which would have skipped the mandatory High/Critical gate on a typo.
+- README no longer says telemetry writes never block execution; they are synchronous SQLite writes.
+- Added `examples/agent-runtime-gate`, mapping a runtime-style task result to Accept / Retry / Escalate offline.
+
 ## 0.3.0 - 2026-09-27
 
 - Surfaced threshold freeze provenance in the generated evaluation report: the report now states whether thresholds were loaded from `fixtures/frozen_hybrid_config.json` (recording freeze timestamp, threshold values, and the calibration sweep's validation notes quoted verbatim) or fell back to built-in defaults (recording that they are not from a calibration sweep), and explicitly notes when `tau_accept` was overridden via `--risk-threshold`.

@@ -8,6 +8,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Parses the `--risk` argument. An unrecognised value is an error: silently
+/// falling back to `low` would disable the mandatory High/Critical gate on a typo.
+fn parse_risk_level(raw: &str) -> Result<RiskLevel, String> {
+    RiskLevel::from_str(raw.trim())
+        .map_err(|e| format!("{e} (expected one of: low, medium, high, critical)"))
+}
+
 pub async fn execute(
     provider_name: String,
     context: String,
@@ -16,7 +23,7 @@ pub async fn execute(
     options: Option<Vec<String>>,
     db_path: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let risk_level = RiskLevel::from_str(&risk).unwrap_or(RiskLevel::Low);
+    let risk_level = parse_risk_level(&risk)?;
     let store = TelemetryStore::open(&db_path)?;
 
     let is_live_jev = provider_name.to_lowercase() == "jev";
@@ -97,4 +104,21 @@ pub async fn execute(
     println!("====================================================================");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_risk_levels_parse() {
+        assert_eq!(parse_risk_level("critical").unwrap(), RiskLevel::Critical);
+        assert_eq!(parse_risk_level(" High ").unwrap(), RiskLevel::High);
+    }
+
+    #[test]
+    fn misspelled_risk_level_is_rejected_not_downgraded_to_low() {
+        let err = parse_risk_level("critcal").unwrap_err();
+        assert!(err.contains("critcal"));
+    }
 }

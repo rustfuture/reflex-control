@@ -41,6 +41,7 @@ jobs:
         run: |
           cargo build --bin example-verifier-gate
           cargo build --bin example-shadow-mode
+          cargo run --bin example-agent-runtime-gate
 
       - name: Test Verifier Gate Demo
         run: cargo run --bin reflex -- demo verifier-gate

@@ -41,3 +41,13 @@ cargo run -p example-shadow-mode
 
 - Records the sample orchestrator action, Reflex's predicted action, latency, cost estimate, and an example outcome in memory.
 - Illustrates the telemetry API; production shadow operation and traffic evaluation require a separate integration and validation effort.
+
+---
+
+## 3. Agent Runtime Gate (`examples/agent-runtime-gate`)
+
+Maps a runtime-style task result (exit status, timeout, verification pass/fail, changed files, retries left) onto `DeterministicEvidence`, runs the Guarded Hybrid composer and risk policy with the mock evidence provider, and collapses the result to Accept / Retry / Escalate. Anything other than a clean autonomous pass or a budgeted retry escalates. The result struct is local to the example; no agent runtime crate is linked, and the sensitive-path heuristic is illustrative.
+
+```bash
+cargo run -p example-agent-runtime-gate
+```

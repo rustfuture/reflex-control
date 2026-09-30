@@ -10,7 +10,7 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
 - Tunes acceptance thresholds across labeled tasks with statistical confidence intervals.
-- Logs runtime choices, shadow decisions, costs, and latencies to SQLite without blocking execution.
+- Logs runtime choices, shadow decisions, costs, and latencies to SQLite (synchronous writes on the calling thread).
 - Includes a CLI to evaluate tasks offline, run calibration sweeps, and inspect telemetry.
 
 ## Quick start
@@ -141,6 +141,23 @@ Demonstrates recording one mock prediction alongside a sample orchestrator actio
 
 ```bash
 cargo run -p example-shadow-mode
+```
+
+### Agent Runtime Gate Example
+
+Maps a runtime-style task result (exit status, timeout, verification result, changed files, retries left) to Accept / Retry / Escalate using the mock evidence provider, with no network access:
+
+```bash
+cargo run -p example-agent-runtime-gate
+```
+
+Sample output:
+```text
+=== Reflex Control: agent-runtime gate (offline, mock evidence) ===
+verified fix                             -> accept (reflex action: terminate)
+provider timeout, budget left            -> retry (reflex action: retry)
+verification failing, budget exhausted   -> escalate (reflex action: defer_to_frontier)
+green tests, secret file touched         -> escalate (reflex action: defer_to_frontier)
 ```
 
 ---

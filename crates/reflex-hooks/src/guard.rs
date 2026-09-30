@@ -254,6 +254,7 @@ fn strip_prefix_dir<'a>(path: &'a str, root: &str, ignore_case: bool) -> Option<
 ///   targets of `cp`, `mv`, `rm`, `install`, `sed -i`, and `dd of=`
 /// * `rm` with a recursive flag on a broad target (`/`, `~`, `.`, `*`, `/usr`, ...)
 /// * `git push --force` / `-f` / `+refspec`
+/// * `git commit --no-verify` / `-n`, which skips the installed pre-commit hook
 ///
 /// It also looks inside `sh -c '...'` and `bash -c '...'`. It does not expand variables,
 /// globs or `$(...)`, and it cannot see writes made by other programs, so a script or
@@ -647,6 +648,12 @@ fn analyze_segment(seg: &Segment, policy: &PathPolicy, depth: usize, out: &mut V
                     "this command force-pushes and can overwrite remote history".to_string(),
                 ));
             }
+            if skips_commit_hooks(args) {
+                out.push(Finding::Dangerous(
+                    "this command commits with --no-verify and skips the pre-commit checks"
+                        .to_string(),
+                ));
+            }
         }
         _ => {}
     }
@@ -694,26 +701,41 @@ fn is_broad_target(target: &str) -> bool {
     t.starts_with('/') && !trimmed.is_empty() && !trimmed[1..].contains('/')
 }
 
-fn is_forced_push(args: &[String]) -> bool {
-    // Find the subcommand, skipping git's own options (`-C dir`, `-c key=val`, ...).
-    let mut iter = args.iter().peekable();
-    while let Some(a) = iter.peek() {
-        if *a == "-C" || *a == "-c" || *a == "--git-dir" || *a == "--work-tree" {
-            iter.next();
-            iter.next();
+/// Splits `git` arguments into the subcommand and its arguments, skipping git's own
+/// options (`-C dir`, `-c key=val`, ...).
+fn git_subcommand(args: &[String]) -> Option<(&str, &[String])> {
+    let mut i = 0;
+    while let Some(a) = args.get(i) {
+        if a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree" {
+            i += 2;
         } else if is_flag(a) {
-            iter.next();
+            i += 1;
         } else {
-            break;
+            return Some((a.as_str(), &args[i + 1..]));
         }
     }
-    if iter.next().map(String::as_str) != Some("push") {
+    None
+}
+
+fn is_forced_push(args: &[String]) -> bool {
+    let Some(("push", rest)) = git_subcommand(args) else {
         return false;
-    }
-    iter.any(|a| {
+    };
+    rest.iter().any(|a| {
         a == "--force"
             || (a.starts_with('-') && !a.starts_with("--") && has_short_flag(a, &['f']))
             || (a.starts_with('+') && a.len() > 1)
+    })
+}
+
+/// `git commit --no-verify` (or `-n`) bypasses the pre-commit hook this crate installs.
+fn skips_commit_hooks(args: &[String]) -> bool {
+    let Some(("commit", rest)) = git_subcommand(args) else {
+        return false;
+    };
+    rest.iter().any(|a| {
+        a == "--no-verify"
+            || (a.starts_with('-') && !a.starts_with("--") && has_short_flag(a, &['n']))
     })
 }
 
@@ -986,6 +1008,8 @@ mod tests {
             ("rm -rf target", "allow"),
             ("git push origin main", "allow"),
             ("git push --force-with-lease origin feature", "allow"),
+            ("git commit -am 'fix'", "allow"),
+            ("git push --no-verify origin main", "allow"),
             // dangerous commands ask
             ("rm -rf /", "ask"),
             ("rm -rf /*", "ask"),
@@ -999,6 +1023,9 @@ mod tests {
             ("git push origin +main", "ask"),
             ("git -C repo push --force origin main", "ask"),
             ("bash -c 'rm -rf /'", "ask"),
+            ("git commit --no-verify -m 'wip'", "ask"),
+            ("git commit -nm 'wip'", "ask"),
+            ("git -C repo commit -n", "ask"),
             // block wins over ask
             ("rm -rf / && echo x > .env", "block"),
         ];

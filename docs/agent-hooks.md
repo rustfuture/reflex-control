@@ -38,6 +38,7 @@ Turn end means "the agent stopped and wants to hand control back".
 | Shell command redirects into, or `cp`/`mv`/`rm`/`tee`/`sed -i` on, a protected path | Blocked                     |
 | `rm -rf` on a broad target (`/`, `~`, `.`, `*`, `/usr`, ...)     | You are asked to confirm                          |
 | `git push --force`, `-f` or `+ref`                               | You are asked to confirm                          |
+| `git commit --no-verify` or `-n` (skips the pre-commit check)    | You are asked to confirm                          |
 | Any other tool call or command                                   | Allowed, silently                                 |
 | Turn end, nothing changed in the working tree                    | Allowed, tests not run                            |
 | Turn end, tests pass, diff small                                 | Allowed, silently                                 |
@@ -148,7 +149,8 @@ command is set, runs the tests. Either failing refuses the commit (exit code 1).
 
 - It runs for every commit made in that repository, whichever tool made it, but only
   in this clone: hooks are not shared through git. It is project scope only.
-- `git commit --no-verify` skips it, as with any hook.
+- `git commit --no-verify` skips it, as with any hook. When an agent with a Reflex hook tries
+  that, you are asked to confirm first.
 - If `reflex` crashes or is not on `PATH`, the commit goes through; only a deliberate
   refusal (exit code 1) blocks.
 - If a pre-commit hook of yours already exists, it is renamed to `pre-commit.local` and

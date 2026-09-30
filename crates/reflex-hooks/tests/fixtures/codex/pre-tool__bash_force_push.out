@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs. Codex hooks cannot ask for confirmation, so this was not run. Ask the user whether to go ahead; if they agree, they can run it themselves."}}

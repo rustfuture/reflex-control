@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Confidence: {:.2}", resp2.decision.confidence);
     println!("Action:     {action2}");
     assert_eq!(action2, ReflexAction::Escalate);
-    println!("-> Safety rule enforced: High/Critical risk cannot bypass mandatory verification, despite 0.96 confidence!");
+    println!("-> Safety rule: high and critical risk always escalate to verification, even at 0.96 confidence.");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Part 2: Guarded Hybrid Architecture with Atomic Evidence
@@ -103,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Risk Score:                   {clean_risk:.2}");
     println!("Effective Action:             {final_clean_action}");
     assert!(final_clean_action.is_autonomous_pass());
-    println!("-> Clean execution passed autonomously with 0 frontier cost!");
+    println!("-> Clean execution finished autonomously without a frontier call.");
 
     // Case 4: Subtle security defect that PASSED tests (e.g. leaked API credentials)
     let defect_evidence = EvidenceVector::new(DeterministicEvidence {
@@ -140,9 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Risk Score:                   {defect_risk:.2}");
     println!("Effective Action:             {final_defect_action}");
     assert_eq!(final_defect_action, ReflexAction::DeferToFrontier);
-    println!(
-        "-> Inviolable Safety Veto: Security hazard intercepted and escalated despite green tests!"
-    );
+    println!("-> Safety veto: the security risk was escalated even though tests passed.");
 
     println!("\n=== All Verifier Gate examples completed successfully. ===");
     Ok(())

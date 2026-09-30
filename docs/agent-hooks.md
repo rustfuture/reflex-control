@@ -16,10 +16,16 @@ What it does for you:
 ## Quick start
 
 ```sh
-cargo install --git https://github.com/rustfuture/reflex-control reflex-cli
+curl -fsSL https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.sh | sh
 reflex install
 # done
 ```
+
+On Windows, in PowerShell: `irm https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.ps1 | iex`.
+With Rust installed you can build from source instead:
+`cargo install --git https://github.com/rustfuture/reflex-control reflex-cli`.
+The installer puts `reflex` in `~/.local/bin` (`%LOCALAPPDATA%\reflex\bin` on Windows) and tells you if that
+directory is not on your `PATH`.
 
 `reflex install` is a short wizard: it detects your tools and test command, asks a few
 questions, shows the files it will change, and writes them only after you confirm.

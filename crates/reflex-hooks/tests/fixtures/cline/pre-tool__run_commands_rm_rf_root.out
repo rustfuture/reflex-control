@@ -1,0 +1,1 @@
+{"cancel":true,"errorMessage":"Reflex Control: this command recursively deletes a broad target. Confirm before it runs. Cline hooks cannot ask for confirmation, so the call was cancelled. Run it yourself if you want it."}

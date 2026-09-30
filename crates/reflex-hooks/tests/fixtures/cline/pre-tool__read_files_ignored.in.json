@@ -1,0 +1,28 @@
+{
+  "hookName": "tool_call",
+  "clineVersion": "1.0.0",
+  "timestamp": "2026-01-15T10:30:00Z",
+  "taskId": "conv-123",
+  "workspaceRoots": [
+    "/work/proj"
+  ],
+  "userId": "user",
+  "iteration": 1,
+  "tool_call": {
+    "id": "call-1",
+    "name": "read_files",
+    "input": {
+      "files": [
+        {
+          "path": "/work/proj/.env"
+        }
+      ]
+    }
+  },
+  "preToolUse": {
+    "toolName": "read_files",
+    "parameters": {
+      "files": "[{\"path\": \"/work/proj/.env\"}]"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+#!/bin/sh
+# reflex-control managed hook. Installed by `reflex install`, removed by `reflex uninstall`.
+# Cline hands the tool call to this script as JSON on stdin; reflex answers with JSON on stdout.
+# Without reflex on PATH the call is allowed.
+if command -v reflex >/dev/null 2>&1; then
+  exec reflex hook cline pre-tool
+fi
+echo '{}'
+exit 0

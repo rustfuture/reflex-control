@@ -1,0 +1,14 @@
+{
+  "cwd": "/work/proj",
+  "session_id": "ses_1",
+  "tool": "edit",
+  "args": {
+    "path": "/work/proj/app/.env.local",
+    "edits": [
+      {
+        "oldText": "a",
+        "newText": "b"
+      }
+    ]
+  }
+}

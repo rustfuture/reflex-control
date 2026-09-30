@@ -1,0 +1,6 @@
+{
+  "hookName": "tool_call",
+  "workspaceRoots": [
+    "/work/proj"
+  ]
+}

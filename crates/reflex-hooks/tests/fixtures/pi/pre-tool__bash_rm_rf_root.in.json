@@ -1,0 +1,8 @@
+{
+  "cwd": "/work/proj",
+  "session_id": "ses_1",
+  "tool": "bash",
+  "args": {
+    "command": "rm -rf /"
+  }
+}

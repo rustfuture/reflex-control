@@ -1,10 +1,14 @@
 pub mod benchmark;
 pub mod calibrate;
 pub mod demo;
+pub mod doctor;
 pub mod experiment;
+pub mod hook;
 pub mod init;
 pub mod inspect;
+pub mod install;
 pub mod pareto;
 pub mod report;
 pub mod run;
 pub mod shadow;
+pub mod uninstall;

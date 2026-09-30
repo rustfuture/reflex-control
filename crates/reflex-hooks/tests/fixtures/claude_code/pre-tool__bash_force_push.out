@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs."}}

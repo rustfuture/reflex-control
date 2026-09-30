@@ -4,6 +4,7 @@ All notable changes to Reflex Control are documented here.
 
 ## Unreleased
 
+- Added agent hooks: `reflex install` (interactive setup wizard), `reflex uninstall` and `reflex doctor`, plus a `reflex hook <agent> <event>` entry point. Targets are Claude Code (`PreToolUse` and `Stop` hooks) and a generic git pre-commit hook. Hooks block writes to protected paths, ask before risky shell commands, run the project's tests when the agent stops and send failures back for a limited number of retries. Settings live in `.reflex.toml`. Hook mode uses deterministic evidence only; see `docs/agent-hooks.md`. New crate `reflex-hooks`; new dependencies `toml`, `globset`, `dirs` and `cliclack`.
 - `reflex run` now rejects an unrecognised `--risk` value instead of silently treating it as `low`, which would have skipped the mandatory High/Critical gate on a typo.
 - README no longer says telemetry writes never block execution; they are synchronous SQLite writes.
 - Added `examples/agent-runtime-gate`, mapping a runtime-style task result to Accept / Retry / Escalate offline.

@@ -60,6 +60,28 @@ enum Commands {
         #[command(subcommand)]
         sub: DemoSubcommands,
     },
+
+    /// Set up Reflex Control as a hook in your coding agent (interactive wizard)
+    Install(commands::install::InstallArgs),
+
+    /// Remove the hooks that `reflex install` added
+    Uninstall {
+        /// Do not ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// Show what is installed and which settings the hooks use
+    Doctor,
+
+    /// Entry point called by agent hooks; reads the agent's JSON on stdin
+    #[command(hide = true)]
+    Hook {
+        /// Agent id, e.g. claude-code or git
+        agent: String,
+        /// Hook event, e.g. pre-tool, stop or pre-commit
+        event: String,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -176,6 +198,11 @@ enum DemoSubcommands {
     },
 }
 
+fn exit_with_error(e: &dyn std::fmt::Display) -> ! {
+    eprintln!("error: {e}");
+    std::process::exit(1);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -242,6 +269,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 commands::demo::execute_verifier_gate(db).await?;
             }
         },
+        Commands::Install(args) => match commands::install::execute(args) {
+            Ok(commands::install::Outcome::Done) => {}
+            // Same status as an interrupted shell command.
+            Ok(commands::install::Outcome::Cancelled) => std::process::exit(130),
+            Err(e) => exit_with_error(&e),
+        },
+        Commands::Uninstall { yes } => {
+            if let Err(e) = commands::uninstall::execute(yes) {
+                exit_with_error(&e);
+            }
+        }
+        Commands::Doctor => match commands::doctor::execute() {
+            Ok(true) => {}
+            Ok(false) => std::process::exit(1),
+            Err(e) => exit_with_error(&e),
+        },
+        Commands::Hook { agent, event } => commands::hook::execute(&agent, &event),
     }
 
     Ok(())

@@ -16,10 +16,16 @@ What it does for you:
 ## Quick start
 
 ```sh
-cargo install --git https://github.com/rustfuture/reflex-control reflex-cli
+curl -fsSL https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.sh | sh
 reflex install
 # done
 ```
+
+On Windows, in PowerShell: `irm https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.ps1 | iex`.
+With Rust installed you can build from source instead:
+`cargo install --git https://github.com/rustfuture/reflex-control reflex-cli`.
+The installer puts `reflex` in `~/.local/bin` (`%LOCALAPPDATA%\reflex\bin` on Windows) and tells you if that
+directory is not on your `PATH`.
 
 `reflex install` is a short wizard: it detects your tools and test command, asks a few
 questions, shows the files it will change, and writes them only after you confirm.
@@ -141,6 +147,83 @@ starts with `reflex hook`.
   keeps working for them, but the protection is off. Use user scope if you do not want
   to commit it.
 
+### Cursor
+
+Installs into `.cursor/hooks.json` (this project) or `~/.cursor/hooks.json` (all your
+projects). Existing hooks are kept; ours are the entries whose `command` starts with
+`reflex hook`. Restart Cursor (or reload its hooks) after installing.
+
+- `preToolUse` on `Write` and `Delete`: blocks a write to a protected path.
+- `beforeShellExecution`: blocks a command that writes to a protected path, and asks you
+  to confirm risky ones (force push, `rm -rf` on a broad target).
+- `stop`: when the tests fail, the agent gets the failure output as a follow-up message and
+  keeps working, up to `tests.max_retries` times. When it is out of tries, or for a large
+  change, the message goes to stderr (Cursor's hooks log) and the agent stops; Cursor has
+  no documented way to show a message at that point.
+- A block also exits with code 2, which Cursor treats as a deny by itself, so it holds
+  even if the JSON reply is not understood. Cursor lets an action through if a hook
+  crashes or times out.
+- The shell tool is left out of the `preToolUse` matcher on purpose: `beforeShellExecution`
+  is the one that can ask, and using both would ask you twice.
+- Cannot see reads, edits by tools other than `Write` and `Delete`, or what MCP tools
+  do. The shell check has the limits listed under Claude Code.
+
+**Not verified.** The official hooks page (https://cursor.com/docs/hooks) could not be read
+while this was written; everything above comes from secondary descriptions of it, and
+nothing has been run against a real Cursor. In particular:
+
+- whether an edit to an existing file arrives as a `Write` call (if Cursor uses another
+  tool name for in-place edits, those are not checked);
+- the shape of `tool_input` for `Write` and `Delete`; the adapter looks for the path under
+  `file_path`, `path`, `filePath` and `target_file`, and allows the call if none is there;
+- whether `matcher` on `preToolUse` is honoured (the adapter ignores other tools either way);
+- that `timeout` is in seconds, and that `stop` accepts `followup_message` from a hook
+  installed like this.
+
+If Cursor rejects the file, `reflex uninstall` removes our entries again.
+
+### Codex CLI
+
+Installs into `.codex/hooks.json` (this project) or `~/.codex/hooks.json` (all your
+projects; `CODEX_HOME` is not consulted). Existing hooks are kept; ours are the ones whose
+command starts with `reflex hook`.
+
+- `PreToolUse` on `apply_patch` and `Bash`: Codex edits files with `apply_patch`, so the
+  files named in the patch (`Add File`, `Update File`, `Delete File`, `Move to`) are
+  checked, and one protected file blocks the whole patch. Shell commands get the same
+  check as in Claude Code, and `apply_patch <<'EOF'` typed into the shell tool is read as a
+  patch too (only when the command starts with `apply_patch`).
+- `Stop`: when the tests fail, the failure output becomes the agent's next prompt, up to
+  `tests.max_retries` times; otherwise you get a warning message and Codex stops.
+- Codex hooks cannot ask for confirmation: it rejects `permissionDecision: "ask"`. A
+  command that would ask you (force push, `rm -rf /`) is denied instead, and the agent is
+  told to ask you and, if you agree, to have you run it yourself.
+- Cannot see reads or other tools (MCP, web).
+
+**Hooks must be trusted.** Codex does not run a user or project hook until you have
+approved it. It asks when it starts (or open `/hooks`), and asks again whenever the hook
+changes (its hash covers the event, matcher, command and timeout). Until then Reflex
+Control does nothing in Codex, silently. `reflex install` prints a reminder;
+`reflex doctor` only shows that the file is in place, not whether Codex trusts it. In a
+project, Codex may also skip `.codex/` until the project itself is trusted (it says so
+when it starts).
+
+**Verified against the Codex source** (`codex-rs/hooks` and `codex-rs/core` in
+https://github.com/openai/codex, main as of 2026-09-30): the `hooks.json` shape
+(`hooks` -> event -> `[{matcher, hooks: [{type, command, timeout}]}]`, `timeout` in
+seconds, no other top-level key but `description`); the `PreToolUse` and `Stop` input
+fields; `apply_patch` and `Bash` as tool names, with the patch text in
+`tool_input.command`; deny by JSON or by exit code 2 with a reason on stderr; `ask` and
+`allow` rejected from `PreToolUse`; `decision: "block"` and `systemMessage` on `Stop`;
+that untrusted hooks do not run; and an integration test there showing that a
+`PreToolUse` deny stops `apply_patch` before it writes.
+
+**Not verified.** Codex issue 27833 reports that an `apply_patch` deny was not enforced on
+0.133.0. The issue itself could not be read from here, so its status is unknown; the
+enforcement is in the current source and has a test, but which released version has it was
+not checked. Test with your version: ask Codex to edit `.env` and see the edit refused.
+Nothing was run against a real Codex either.
+
 ### Git pre-commit
 
 Installs `.git/hooks/pre-commit` (or the directory `core.hooksPath` points to). It
@@ -173,6 +256,8 @@ is the git hook's deliberate refusal.
 |------------------------------------------|-----------------------------------------------------------------|
 | `.reflex.toml` (or `~/.config/reflex/reflex.toml`) | created or rewritten                                  |
 | `.claude/settings.json` (or `~/.claude/`) | our hook entries merged in, everything else kept                |
+| `.cursor/hooks.json` (or `~/.cursor/`)   | our hook entries merged in, everything else kept                |
+| `.codex/hooks.json` (or `~/.codex/`)     | our hook entries merged in, everything else kept                |
 | `.git/hooks/pre-commit`                  | created, or an existing hook chained as above                   |
 | `.gitignore`                             | `.reflex/` and `*.reflex-bak` appended (project scope)          |
 

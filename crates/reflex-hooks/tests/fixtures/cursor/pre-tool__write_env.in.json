@@ -1,0 +1,17 @@
+{
+  "conversation_id": "conv-1",
+  "generation_id": "gen-1",
+  "model": "default",
+  "hook_event_name": "preToolUse",
+  "cursor_version": "1.7.0",
+  "workspace_roots": [
+    "/work/proj"
+  ],
+  "tool_name": "Write",
+  "tool_use_id": "tu-1",
+  "cwd": "/work/proj",
+  "tool_input": {
+    "file_path": "/work/proj/.env",
+    "contents": "KEY=1"
+  }
+}

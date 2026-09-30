@@ -119,18 +119,18 @@ Task 2:     Execute DROP COLUMN users.auth_token migration
 Risk:       critical
 Confidence: 0.96
 Action:     escalate
--> Safety rule enforced: High/Critical risk cannot bypass mandatory verification, despite 0.96 confidence!
+-> Safety rule: high and critical risk always escalate to verification, even at 0.96 confidence.
 
 --- Part 2: Guarded Hybrid Architecture (Candidate E) ---
 Clean Task Composite Quality: 0.74
 Risk Score:                   0.08
 Effective Action:             terminate
--> Clean execution passed autonomously with 0 frontier cost!
+-> Clean execution finished autonomously without a frontier call.
 
 Defect Task Quality:          0.85
 Risk Score:                   0.90
 Effective Action:             defer_to_frontier
--> Inviolable Safety Veto: Security hazard intercepted and escalated despite green tests!
+-> Safety veto: the security risk was escalated even though tests passed.
 
 === All Verifier Gate examples completed successfully. ===
 ```

@@ -1,0 +1,1 @@
+Reflex Control: this edit writes to `/work/proj/.github/workflows/ci.yml`, which is protected (matches `.github/workflows/**`). Do not change it. To allow it, the user can edit `protect.paths` in .reflex.toml.

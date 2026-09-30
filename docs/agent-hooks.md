@@ -141,6 +141,41 @@ starts with `reflex hook`.
   keeps working for them, but the protection is off. Use user scope if you do not want
   to commit it.
 
+### Cursor
+
+Installs into `.cursor/hooks.json` (this project) or `~/.cursor/hooks.json` (all your
+projects). Existing hooks are kept; ours are the entries whose `command` starts with
+`reflex hook`. Restart Cursor (or reload its hooks) after installing.
+
+- `preToolUse` on `Write` and `Delete`: blocks a write to a protected path.
+- `beforeShellExecution`: blocks a command that writes to a protected path, and asks you
+  to confirm risky ones (force push, `rm -rf` on a broad target).
+- `stop`: when the tests fail, the agent gets the failure output as a follow-up message and
+  keeps working, up to `tests.max_retries` times. When it is out of tries, or for a large
+  change, the message goes to stderr (Cursor's hooks log) and the agent stops; Cursor has
+  no documented way to show a message at that point.
+- A block also exits with code 2, which Cursor treats as a deny by itself, so it holds
+  even if the JSON reply is not understood. Cursor lets an action through if a hook
+  crashes or times out.
+- The shell tool is left out of the `preToolUse` matcher on purpose: `beforeShellExecution`
+  is the one that can ask, and using both would ask you twice.
+- Cannot see reads, edits by tools other than `Write` and `Delete`, or what MCP tools
+  do. The shell check has the limits listed under Claude Code.
+
+**Not verified.** The official hooks page (https://cursor.com/docs/hooks) could not be read
+while this was written; everything above comes from secondary descriptions of it, and
+nothing has been run against a real Cursor. In particular:
+
+- whether an edit to an existing file arrives as a `Write` call (if Cursor uses another
+  tool name for in-place edits, those are not checked);
+- the shape of `tool_input` for `Write` and `Delete`; the adapter looks for the path under
+  `file_path`, `path`, `filePath` and `target_file`, and allows the call if none is there;
+- whether `matcher` on `preToolUse` is honoured (the adapter ignores other tools either way);
+- that `timeout` is in seconds, and that `stop` accepts `followup_message` from a hook
+  installed like this.
+
+If Cursor rejects the file, `reflex uninstall` removes our entries again.
+
 ### Git pre-commit
 
 Installs `.git/hooks/pre-commit` (or the directory `core.hooksPath` points to). It
@@ -173,6 +208,7 @@ is the git hook's deliberate refusal.
 |------------------------------------------|-----------------------------------------------------------------|
 | `.reflex.toml` (or `~/.config/reflex/reflex.toml`) | created or rewritten                                  |
 | `.claude/settings.json` (or `~/.claude/`) | our hook entries merged in, everything else kept                |
+| `.cursor/hooks.json` (or `~/.cursor/`)   | our hook entries merged in, everything else kept                |
 | `.git/hooks/pre-commit`                  | created, or an existing hook chained as above                   |
 | `.gitignore`                             | `.reflex/` and `*.reflex-bak` appended (project scope)          |
 

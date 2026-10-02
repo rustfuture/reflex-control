@@ -7,7 +7,8 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
+> [!NOTE]
+> **Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
 
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
@@ -29,6 +30,8 @@ reflex demo verifier-gate
 ```
 
 The demo prints local policy decisions without an API key or model download. Prebuilt Linux binaries require glibc; unsupported platforms can build from source. On Windows, use the [PowerShell installer](install.ps1).
+
+<details><summary>Build from source</summary>
 
 ### Build from source
 
@@ -79,6 +82,8 @@ cargo run --bin reflex -- run --provider jev \
   --risk low
 ```
 
+</details>
+
 ---
 
 ## How it works
@@ -112,6 +117,8 @@ The repository is organized as a Cargo workspace separating core abstractions fr
 ## Runnable Examples
 
 The repository includes standalone runnable examples under [`examples/`](examples/):
+
+<details><summary>All examples</summary>
 
 ### Verifier Gate Example
 
@@ -177,6 +184,8 @@ verification failing, budget exhausted   -> escalate (reflex action: defer_to_fr
 green tests, secret file touched         -> escalate (reflex action: defer_to_frontier)
 ```
 
+</details>
+
 ---
 
 <a id="evaluation-benchmark--measured-results"></a>
@@ -192,6 +201,8 @@ Historical Candidate E aggregates, partition history, and metric definitions are
 
 All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 
+<details><summary>Dataset details</summary>
+
 | Dataset File | Role | Sample Count |
 | :--- | :--- | :---: |
 | `fixtures/v2_eval_blind_test.json` | Curated synthetic held-out evaluation partition (legacy filename) | 100 tasks |
@@ -199,6 +210,8 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 | `fixtures/v2_eval_validation.json` | Architecture comparison split (Guarded Hybrid vs Deterministic Rules) | 30 tasks |
 | `fixtures/v2_eval_dev.json` | Development & connectivity smoke testing split | 30 tasks |
 | `fixtures/frozen_hybrid_config.json` | Frozen 0.3.0 policy parameters ($\tau_{\text{accept}} = 0.22, \theta_{\text{clean}} = 0.40, \text{risk}_{\text{frontier}} = 0.70$); fit with live Jev on the calibration partition | Config |
+
+</details>
 
 ---
 

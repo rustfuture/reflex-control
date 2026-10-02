@@ -1,0 +1,17 @@
+{
+  "clineVersion": "3.40.0",
+  "hookName": "PreToolUse",
+  "timestamp": "1768473000000",
+  "taskId": "conv-123",
+  "workspaceRoots": [
+    "/work/proj"
+  ],
+  "userId": "user",
+  "preToolUse": {
+    "toolName": "editor",
+    "parameters": {
+      "path": "/work/proj/.env",
+      "new_text": "KEY=1"
+    }
+  }
+}

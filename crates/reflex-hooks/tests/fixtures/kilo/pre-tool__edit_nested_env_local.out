@@ -1,0 +1,1 @@
+{"action":"block","reason":"Reflex Control: this edit writes to `/work/proj/app/.env.local`, which is protected (matches `.env.*`). Do not change it. To allow it, the user can edit `protect.paths` in .reflex.toml."}

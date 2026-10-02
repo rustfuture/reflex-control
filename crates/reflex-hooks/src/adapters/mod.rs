@@ -15,9 +15,14 @@ use crate::install::{Files, InstallError, Plan, PlanCtx};
 use std::path::{Path, PathBuf};
 
 pub mod claude_code;
+pub mod cline;
 pub mod codex;
 pub mod cursor;
 pub mod git;
+mod js_bridge;
+pub mod opencode;
+pub mod pi;
+mod util;
 
 /// What the agent is about to do, in agent-independent terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,10 +104,14 @@ pub trait AgentAdapter: Sync {
     fn is_installed(&self, ctx: &PlanCtx, existing: &Files) -> bool;
 }
 
-static ADAPTERS: [&dyn AgentAdapter; 4] = [
+static ADAPTERS: [&dyn AgentAdapter; 8] = [
     &claude_code::ClaudeCode,
     &cursor::Cursor,
     &codex::Codex,
+    &opencode::OPENCODE,
+    &opencode::KILO,
+    &cline::Cline,
+    &pi::Pi,
     &git::GitHook,
 ];
 
@@ -122,7 +131,19 @@ mod tests {
     #[test]
     fn registry_ids_are_unique_and_findable() {
         let ids: Vec<&str> = registry().iter().map(|a| a.id()).collect();
-        assert_eq!(ids, ["claude-code", "cursor", "codex", "git"]);
+        assert_eq!(
+            ids,
+            [
+                "claude-code",
+                "cursor",
+                "codex",
+                "opencode",
+                "kilo",
+                "cline",
+                "pi",
+                "git"
+            ]
+        );
         for id in ids {
             assert_eq!(find(id).unwrap().id(), id);
         }

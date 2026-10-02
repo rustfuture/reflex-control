@@ -1,0 +1,16 @@
+{
+  "clineVersion": "3.40.0",
+  "hookName": "PreToolUse",
+  "timestamp": "1768473000000",
+  "taskId": "conv-123",
+  "workspaceRoots": [
+    "/work/proj"
+  ],
+  "userId": "user",
+  "preToolUse": {
+    "toolName": "apply_patch",
+    "parameters": {
+      "input": "*** Begin Patch\n*** Update File: src/a.rs\n*** Move to: secrets/a.rs\n@@\n-x\n+y\n*** End Patch"
+    }
+  }
+}

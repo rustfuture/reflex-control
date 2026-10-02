@@ -1,0 +1,24 @@
+{
+  "hookName": "tool_call",
+  "clineVersion": "1.0.0",
+  "timestamp": "2026-01-15T10:30:00Z",
+  "taskId": "conv-123",
+  "workspaceRoots": [
+    "/work/proj"
+  ],
+  "userId": "user",
+  "iteration": 1,
+  "tool_call": {
+    "id": "call-1",
+    "name": "apply_patch",
+    "input": {
+      "input": "*** Begin Patch\n*** Update File: config/.env\n@@\n-A=1\n+A=2\n*** End Patch"
+    }
+  },
+  "preToolUse": {
+    "toolName": "apply_patch",
+    "parameters": {
+      "input": "*** Begin Patch\n*** Update File: config/.env\n@@\n-A=1\n+A=2\n*** End Patch"
+    }
+  }
+}

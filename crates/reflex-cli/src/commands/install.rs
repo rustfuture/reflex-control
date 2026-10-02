@@ -26,7 +26,7 @@ pub struct InstallArgs {
     #[arg(short, long)]
     pub yes: bool,
 
-    /// Agents to install into, comma separated (claude-code, git)
+    /// Agents to install into, comma separated (claude-code, cursor, codex, opencode, kilo, cline, pi, git)
     #[arg(long, value_delimiter = ',')]
     pub agent: Option<Vec<String>>,
 

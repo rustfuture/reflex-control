@@ -1,0 +1,8 @@
+{
+  "cwd": "/work/proj",
+  "session_id": "ses_1",
+  "tool": "apply_patch",
+  "args": {
+    "patchText": "*** Begin Patch\n*** Update File: config/.env\n@@\n-A=1\n+A=2\n*** End Patch"
+  }
+}

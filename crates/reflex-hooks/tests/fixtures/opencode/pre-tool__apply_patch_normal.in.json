@@ -1,0 +1,8 @@
+{
+  "cwd": "/work/proj",
+  "session_id": "ses_1",
+  "tool": "apply_patch",
+  "args": {
+    "patchText": "*** Begin Patch\n*** Add File: src/new.rs\n+fn main() {}\n*** Update File: src/lib.rs\n@@\n-x\n+y\n*** End Patch"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "cwd": "/work/proj",
+  "session_id": "ses_1",
+  "tool": "edit",
+  "args": {
+    "filePath": "/work/proj/app/.env.local",
+    "oldString": "a",
+    "newString": "b"
+  }
+}

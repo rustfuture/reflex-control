@@ -122,9 +122,19 @@ impl PathPolicy {
         if rel.is_empty() {
             return None;
         }
+        let normalized = collapse_dots(&normalize_separators(path.trim()));
+        let root = collapse_dots(&self.root);
+        let outside = (normalized.starts_with('/') || is_drive_path(&normalized))
+            && strip_prefix_dir(
+                &normalized,
+                &root,
+                is_drive_path(&normalized) || is_drive_path(&root),
+            )
+            .is_none();
         self.set
             .matches(&rel)
             .into_iter()
+            .filter(|&i| !outside || !normalize_separators(self.patterns[i].trim()).contains('/'))
             .min()
             .map(|i| self.patterns[i].as_str())
     }
@@ -264,8 +274,21 @@ fn strip_prefix_dir<'a>(path: &'a str, root: &str, ignore_case: bool) -> Option<
 /// A protected-path write gives `Block`; a dangerous command gives `Ask`; the first
 /// `Block` wins over any `Ask`.
 pub fn check_command(command: &str, policy: &PathPolicy) -> Verdict {
+    check_command_in_dir(command, policy, None)
+}
+
+/// Checks shell writes relative to the agent's directory, or the project root when
+/// it is unknown. Directory changes inside the command are not tracked.
+pub fn check_command_in_dir(command: &str, policy: &PathPolicy, cwd: Option<&Path>) -> Verdict {
+    let policy = ShellPolicy {
+        paths: policy,
+        cwd: cwd
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map(|dir| normalize_separators(&dir.to_string_lossy()))
+            .unwrap_or_else(|| policy.root.clone()),
+    };
     let mut ask: Option<String> = None;
-    for finding in analyze(command, policy, 0) {
+    for finding in analyze(command, &policy, 0) {
         match finding {
             Finding::Protected { path, pattern } => {
                 return Verdict::Block {
@@ -341,7 +364,25 @@ struct Segment {
     out_targets: Vec<String>,
 }
 
-fn analyze(command: &str, policy: &PathPolicy, depth: usize) -> Vec<Finding> {
+/// Resolves only extracted write targets; command text and displayed paths stay intact.
+struct ShellPolicy<'a> {
+    paths: &'a PathPolicy,
+    cwd: String,
+}
+
+impl ShellPolicy<'_> {
+    fn matching_pattern(&self, target: &str) -> Option<&str> {
+        let target = normalize_separators(target);
+        let resolved = if target.starts_with('/') || is_drive_path(&target) {
+            target
+        } else {
+            format!("{}/{target}", self.cwd.trim_end_matches('/'))
+        };
+        self.paths.matching_pattern(&resolved)
+    }
+}
+
+fn analyze(command: &str, policy: &ShellPolicy, depth: usize) -> Vec<Finding> {
     let mut findings = Vec::new();
     for seg in split_segments(command) {
         for target in &seg.out_targets {
@@ -354,7 +395,7 @@ fn analyze(command: &str, policy: &PathPolicy, depth: usize) -> Vec<Finding> {
 
 /// Like [`check_target`], but `target` may be a directory: a protected directory is
 /// caught by probing a file below it.
-fn check_target_or_dir(target: &str, policy: &PathPolicy, findings: &mut Vec<Finding>) {
+fn check_target_or_dir(target: &str, policy: &ShellPolicy, findings: &mut Vec<Finding>) {
     check_target(target, policy, findings);
     let dir = target.trim_end_matches(['/', '\\']);
     if !dir.is_empty() {
@@ -369,7 +410,7 @@ fn check_target_or_dir(target: &str, policy: &PathPolicy, findings: &mut Vec<Fin
     }
 }
 
-fn check_target(target: &str, policy: &PathPolicy, findings: &mut Vec<Finding>) {
+fn check_target(target: &str, policy: &ShellPolicy, findings: &mut Vec<Finding>) {
     if target.is_empty() || target.starts_with("/dev/") {
         return;
     }
@@ -549,7 +590,7 @@ fn has_short_flag(word: &str, letters: &[char]) -> bool {
         && word[1..].chars().any(|c| letters.contains(&c))
 }
 
-fn analyze_segment(seg: &Segment, policy: &PathPolicy, depth: usize, out: &mut Vec<Finding>) {
+fn analyze_segment(seg: &Segment, policy: &ShellPolicy, depth: usize, out: &mut Vec<Finding>) {
     let mut words: &[String] = &seg.words;
     // Skip `VAR=x`, `sudo`, `env -i`, ... in front of the real command.
     loop {
@@ -913,6 +954,8 @@ mod tests {
             // absolute path outside the root: only name patterns apply
             (&default, "/home/me/keys/server.pem", true),
             (&default, "/home/me/secrets/a.txt", false),
+            (&default, "/secrets/a.txt", false),
+            (&default, "/secrets/../.env", true),
             // a sibling directory sharing the root as a string prefix is outside it
             (&default, "/work/proj-other/secrets/a.txt", false),
             // `.` and `..` are resolved
@@ -1032,6 +1075,83 @@ mod tests {
         for (cmd, expected) in cases {
             let got = verdict_kind(&check_command(cmd, &policy));
             assert_eq!(got, expected, "command {cmd:?}");
+        }
+    }
+
+    #[test]
+    fn shell_write_targets_use_the_agents_directory() {
+        let policy = policy_with(&["secrets/**"], "/p");
+        let cwd = Some(Path::new("/p/app"));
+        for (target, expected) in [
+            ("../secrets/token.txt", "block"),
+            ("secrets/token.txt", "allow"),
+            ("/p/secrets/abs.txt", "block"),
+            ("./../secrets/token.txt", "block"),
+            ("../../secrets/token.txt", "allow"),
+            ("/secrets/token.txt", "allow"),
+            ("/p-other/secrets/token.txt", "allow"),
+        ] {
+            for command in [
+                format!("echo x > '{target}'"),
+                format!("echo x >> '{target}'"),
+                format!("tee '{target}'"),
+                format!("cp source '{target}'"),
+                format!("mv source '{target}'"),
+                format!("rm '{target}'"),
+                format!("install source '{target}'"),
+                format!("sed -i 's/x/y/' '{target}'"),
+                format!("dd 'of={target}'"),
+                format!("bash -c \"echo x > '{target}'\""),
+            ] {
+                assert_eq!(
+                    verdict_kind(&check_command_in_dir(&command, &policy, cwd)),
+                    expected,
+                    "command {command:?}"
+                );
+            }
+        }
+        assert_eq!(
+            verdict_kind(&check_command_in_dir("cp source ../secrets", &policy, cwd)),
+            "block"
+        );
+        assert_eq!(
+            check_command_in_dir("cp source secrets", &policy, cwd),
+            Verdict::Allow
+        );
+        for cwd in [None, Some(Path::new(""))] {
+            assert_eq!(
+                verdict_kind(&check_command_in_dir(
+                    "echo x > secrets/token.txt",
+                    &policy,
+                    cwd
+                )),
+                "block"
+            );
+            assert_eq!(
+                check_command_in_dir("echo x > ../secrets/token.txt", &policy, cwd),
+                Verdict::Allow
+            );
+        }
+    }
+
+    #[test]
+    fn shell_write_targets_resolve_windows_paths() {
+        let policy = policy_with(&["secrets/**"], "C:/p");
+        for (command, expected) in [
+            ("echo x > '../secrets/token.txt'", "block"),
+            ("echo x > 'secrets/token.txt'", "allow"),
+            ("echo x > 'C:/p/secrets/abs.txt'", "block"),
+            ("echo x > 'D:/secrets/token.txt'", "allow"),
+        ] {
+            assert_eq!(
+                verdict_kind(&check_command_in_dir(
+                    command,
+                    &policy,
+                    Some(Path::new("C:\\p\\app"))
+                )),
+                expected,
+                "command {command:?}"
+            );
         }
     }
 

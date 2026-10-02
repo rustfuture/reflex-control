@@ -2,7 +2,7 @@
 
 ![reflex-control project overview](docs/images/social-preview.png)
 
-Reflex Control decides whether an AI task can finish on its own, retry, or escalate to an expensive reasoning model.
+Reflex Control is a hook that stops AI coding agents from touching protected files, running risky commands unasked, or finishing while tests fail.
 
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -12,11 +12,11 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 
 ![Reflex Control guarding a simulated coding agent: two protected files, a force push and failing tests](docs/demo/agent.gif)
 
-- Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
-- Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
-- Tunes acceptance thresholds across labeled tasks with statistical confidence intervals.
-- Logs runtime choices, shadow decisions, costs, and latencies to SQLite (synchronous writes on the calling thread).
-- Includes a CLI to evaluate tasks offline, run calibration sweeps, and inspect telemetry.
+- Blocks edits and shell writes to paths you protect (by default `.env`, `.env.*`, `*.pem`, `*.key`, `secrets/**`, `.github/workflows/**`, `migrations/**`).
+- Asks you before risky shell commands such as `git push --force`.
+- Runs your test command when the agent says it is done; if the tests fail it sends the output back to the agent (2 retries by default), then asks you.
+- Installs into Claude Code, Cursor, Codex CLI, OpenCode, Kilo Code, Cline and pi with `reflex install` ([which ones ran in a real session](#agent-hooks)).
+- Ships the decision library underneath: a policy that decides whether a task can finish, retry or escalate to a larger model, with calibration sweeps and SQLite telemetry ([how it works](#how-it-works)).
 
 ## Quick start
 
@@ -88,6 +88,20 @@ cargo run --bin reflex -- run --provider jev \
 
 ---
 
+## Agent hooks
+
+`reflex install` adds its hooks to each agent's own settings and keeps the hooks already there; `reflex uninstall` removes only its own entries. Per-agent details and limits: [docs/agent-hooks.md](docs/agent-hooks.md).
+
+| Agent | Status |
+| :--- | :--- |
+| Claude Code | Run in a real Claude Code session: protected writes were refused and failing tests sent the agent back ([record](docs/evidence/claude-code-live-2026-10-02.md)) |
+| Cursor | Built from secondary descriptions of Cursor's hooks; not run in a real session |
+| Codex CLI | Checked against the Codex source; not run in a real session |
+| OpenCode | Checked against the OpenCode source; not run in a real session |
+| Kilo Code | Checked against the Kilo source; not run in a real session |
+| Cline | Checked against the Cline source; not run in a real session |
+| pi | Checked against the pi source; not run in a real session |
+
 ## How it works
 
 Reflex Control evaluates agent execution steps through a multi-layer decision pipeline:
@@ -123,6 +137,7 @@ The repository is organized as a Cargo workspace separating core abstractions fr
 | Crate | Path | Responsibility |
 | :--- | :--- | :--- |
 | `reflex-core` | [`crates/reflex-core`](crates/reflex-core) | Core data models, task contexts, evidence vectors, decision action enums. |
+| `reflex-hooks` | [`crates/reflex-hooks`](crates/reflex-hooks) | Agent hooks: protected paths, shell-command checks, end-of-turn test runs, and the installer and adapter for each agent. |
 | `reflex-provider` | [`crates/reflex-provider`](crates/reflex-provider) | Provider traits and local mock/synthetic implementations for zero-dependency runs. |
 | `reflex-jev` | [`crates/reflex-jev`](crates/reflex-jev) | TypeSafe Jev API integration for atomic semantic signal extraction. |
 | `reflex-policy` | [`crates/reflex-policy`](crates/reflex-policy) | Guarded Hybrid policy implementation, safety veto rules, and acceptance thresholds. |

@@ -8,12 +8,14 @@ const allow = { action: "allow" }
 const confirmed = new Set() // calls that were refused once with "ask the user first"
 const failed = new Set() // sessions whose last run ended in an error or was stopped
 const checking = new Set() // sessions with a turn-end check in flight
+const checkAgain = new Set() // sessions that became idle during a turn-end check
 
 // Runs `reflex hook AGENT event` with `request` on stdin. Never rejects; resolves to a verdict.
 function verdict(event, request, timeoutMs) {
   return new Promise((resolve) => {
     try {
-      const child = execFile("reflex", ["hook", AGENT, event], { timeout: timeoutMs, windowsHide: true }, (_error, stdout) => {
+      const child = execFile("reflex", ["hook", AGENT, event], { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+        if (error) return resolve(allow)
         try {
           const v = JSON.parse(stdout)
           resolve(v && typeof v.action === "string" ? v : allow)
@@ -51,20 +53,33 @@ export default {
         if (!id) return
         if (event.type === "session.error") failed.add(id)
         else if (event.type === "session.status" && event.properties.status?.type === "busy") failed.delete(id)
-        if (event.type !== "session.idle" || failed.delete(id) || checking.has(id)) return
+        if (event.type !== "session.idle" || failed.delete(id)) return
+        if (checking.has(id)) {
+          checkAgain.add(id)
+          return
+        }
         checking.add(id)
         try {
-          const session = await client.session.get({ path: { id } })
-          if (session.data?.parentID) return // a subagent; the parent session is checked instead
-          const v = await verdict("turn-end", { cwd: directory, session_id: id }, 600000)
-          if (v.action === "retry") {
-            await client.session.promptAsync({ path: { id }, body: { parts: [{ type: "text", text: v.reason }] } })
-          } else if (v.action === "notify") {
-            await client.app.log({ body: { service: "reflex-control", level: "warn", message: v.reason } })
-            await client.tui.showToast({ body: { message: v.reason, variant: "warning" } })
-          }
+          do {
+            const session = await client.session.get({ path: { id } })
+            if (session.data?.parentID) {
+              checkAgain.delete(id)
+              return // a subagent; the parent session is checked instead
+            }
+            const v = await verdict("turn-end", { cwd: directory, session_id: id }, 600000)
+            if (v.action === "retry") {
+              await client.session.promptAsync({ path: { id }, body: { parts: [{ type: "text", text: v.reason }] } })
+              // The retry starts another run; its eventual idle will trigger the next check.
+              checkAgain.delete(id)
+              break
+            } else if (v.action === "notify") {
+              await client.app.log({ body: { service: "reflex-control", level: "warn", message: v.reason } })
+              await client.tui.showToast({ body: { message: v.reason, variant: "warning" } })
+            }
+          } while (checkAgain.delete(id))
         } finally {
           checking.delete(id)
+          checkAgain.delete(id)
         }
       } catch {}
     },

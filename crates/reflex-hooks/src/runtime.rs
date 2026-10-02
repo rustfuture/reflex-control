@@ -12,8 +12,8 @@
 use crate::adapters::{self, HookEvent, Rendered};
 use crate::config::{self, Config, ConfigSource};
 use crate::guard::{
-    self, check_command, check_paths, check_staged, decide_turn_end, PathPolicy, TestOutcome,
-    TurnEndInput, Verdict,
+    self, check_command_in_dir, check_paths, check_staged, decide_turn_end, PathPolicy,
+    TestOutcome, TurnEndInput, Verdict,
 };
 use crate::install::Env;
 use crate::state::{self, SessionState, UntrackedFile};
@@ -98,17 +98,24 @@ fn try_handle(agent: &str, event: &str, rt: &dyn Runtime) -> Result<Rendered, St
     let input = adapter.parse(event, &stdin).map_err(|e| e.to_string())?;
     let cwd = input.cwd.clone().unwrap_or_else(|| rt.current_dir());
     let project = rt.project(&cwd)?;
-    let verdict = evaluate(&input.event, &project, rt)?;
+    let verdict = evaluate(&input.event, &project, input.cwd.as_deref(), rt)?;
     Ok(adapter.render(&input.event, &verdict))
 }
 
-fn evaluate(event: &HookEvent, project: &Project, rt: &dyn Runtime) -> Result<Verdict, String> {
+fn evaluate(
+    event: &HookEvent,
+    project: &Project,
+    cwd: Option<&Path>,
+    rt: &dyn Runtime,
+) -> Result<Verdict, String> {
     let policy =
         |p: &Project| PathPolicy::new(&p.config.protect.paths, &p.root).map_err(|e| e.to_string());
     match event {
         HookEvent::Ignore => Ok(Verdict::Allow),
         HookEvent::PreWrite { paths } => Ok(check_paths(paths, &policy(project)?)),
-        HookEvent::PreShell { command } => Ok(check_command(command, &policy(project)?)),
+        HookEvent::PreShell { command } => {
+            Ok(check_command_in_dir(command, &policy(project)?, cwd))
+        }
         HookEvent::TurnEnd { session_id } => rt.turn_end(project, session_id),
         HookEvent::PreCommit => {
             let staged = rt.staged_files(project)?;
@@ -492,6 +499,102 @@ mod tests {
         }
         fn pre_commit_tests(&self, _p: &Project) -> Result<TestOutcome, String> {
             Ok(self.tests.clone())
+        }
+    }
+
+    #[test]
+    fn shell_adapters_resolve_writes_from_a_project_subdirectory() {
+        use serde_json::json;
+
+        for agent in [
+            "claude-code",
+            "codex",
+            "cursor",
+            "opencode",
+            "kilo",
+            "cline",
+            "pi",
+        ] {
+            for cwd in [Some("/p/app"), None] {
+                for (command, blocked_in_app, blocked_at_root) in [
+                    ("echo x > ../secrets/token.txt", true, false),
+                    ("echo x > secrets/token.txt", false, true),
+                    ("echo x > /p/secrets/abs.txt", true, true),
+                    ("echo x > ../../secrets/token.txt", false, false),
+                ] {
+                    let mut payload = match agent {
+                        "claude-code" | "codex" => json!({
+                            "tool_name": "Bash", "tool_input": { "command": command }
+                        }),
+                        "cursor" => json!({ "command": command }),
+                        "cline" => json!({
+                            "tool_call": { "name": "run_commands", "input": { "commands": [command] } }
+                        }),
+                        _ => json!({ "tool": "bash", "args": { "command": command } }),
+                    };
+                    if let Some(cwd) = cwd {
+                        if agent == "cline" {
+                            payload["workspaceRoots"] = json!([cwd]);
+                        } else {
+                            payload["cwd"] = json!(cwd);
+                        }
+                    }
+                    let mut rt = Fake::new(&payload.to_string());
+                    rt.project.as_mut().unwrap().root = PathBuf::from("/p");
+                    let event = if agent == "cursor" {
+                        "shell"
+                    } else {
+                        "pre-tool"
+                    };
+                    let out = handle(agent, event, &rt);
+                    let blocked = if cwd.is_some() {
+                        blocked_in_app
+                    } else {
+                        blocked_at_root
+                    };
+                    let context = format!("{agent}, cwd={cwd:?}, command={command:?}");
+                    if agent == "cursor" && blocked {
+                        assert!(
+                            out.stderr.contains("secrets/**"),
+                            "{context}: {}",
+                            out.stderr
+                        );
+                        assert_eq!(out.exit_code, 2, "{context}");
+                    } else {
+                        assert!(out.stderr.is_empty(), "{context}: {}", out.stderr);
+                        assert_eq!(out.exit_code, 0, "{context}");
+                    }
+                    if !blocked {
+                        match agent {
+                            "claude-code" | "codex" | "cursor" => {
+                                assert!(out.stdout.is_empty(), "{context}: {}", out.stdout);
+                            }
+                            "cline" => assert_eq!(out.stdout, "{}\n", "{context}"),
+                            _ => {
+                                let reply: serde_json::Value =
+                                    serde_json::from_str(&out.stdout).unwrap();
+                                assert_eq!(reply["action"], "allow", "{context}");
+                            }
+                        }
+                    } else {
+                        let reply: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+                        match agent {
+                            "claude-code" | "codex" => assert_eq!(
+                                reply["hookSpecificOutput"]["permissionDecision"], "deny",
+                                "{context}"
+                            ),
+                            "cursor" => assert_eq!(reply["permission"], "deny", "{context}"),
+                            "cline" => assert_eq!(reply["cancel"], true, "{context}"),
+                            _ => assert_eq!(reply["action"], "block", "{context}"),
+                        }
+                        assert!(
+                            out.stdout.contains("secrets/**"),
+                            "{context}: {}",
+                            out.stdout
+                        );
+                    }
+                }
+            }
         }
     }
 

@@ -4,6 +4,8 @@ All notable changes to Reflex Control are documented here.
 
 ## Unreleased
 
+- Fixed shell protected-path checks to resolve relative write targets against the agent's working directory across all shell adapters, falling back to the project root when unknown.
+
 - Added agent hooks for OpenCode, Kilo Code, Cline and pi. OpenCode, Kilo Code and pi get a small plugin or extension file (embedded in `reflex`, source in `integrations/`) that relays tool calls and finished turns to `reflex hook`; Cline gets a `PreToolUse` script. Cline has no hook that can send the agent back, so it is guarded before tool calls only; OpenCode, Kilo Code and Cline cannot ask for confirmation, so a risky command is refused (OpenCode and Kilo let the same call through when the agent repeats it). See `docs/agent-hooks.md`.
 
 ## 0.4.0 - 2026-10-02

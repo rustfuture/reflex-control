@@ -143,7 +143,9 @@ starts with `reflex hook`.
 - Cannot see what the agent reads, or what other tools (MCP servers, `WebFetch`, ...) do.
 - The shell check reads the command text. It does not run the command, expand variables
   or follow `$(...)`, and it cannot see a script or `python -c` writing to a protected
-  file. Treat it as a guard rail against mistakes, not a sandbox. `cat .env` is allowed.
+  file. Relative write targets use the agent's working directory when provided, otherwise
+  the project root. Directory changes from `cd` inside the command are not tracked.
+  Treat it as a guard rail against mistakes, not a sandbox. `cat .env` is allowed.
 - Claude Code stops sending the agent back after a fixed number of consecutive stop
   blocks of its own; the default retry budget (2) is well below it.
 - A committed `.claude/settings.json` reaches teammates who do not have `reflex`

@@ -1,3 +1,4 @@
+pub mod agent_demo;
 pub mod benchmark;
 pub mod calibrate;
 pub mod demo;

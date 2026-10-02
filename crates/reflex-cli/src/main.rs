@@ -191,6 +191,9 @@ struct BenchmarkArgs {
 
 #[derive(Subcommand, Debug)]
 enum DemoSubcommands {
+    /// Watch Reflex Control guard a simulated agent session (no API key)
+    Agent,
+
     /// Run the primary Verifier Gate demo
     VerifierGate {
         #[arg(long, default_value = "reflex.db")]
@@ -265,6 +268,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             commands::experiment::execute(args).await?;
         }
         Commands::Demo { sub } => match sub {
+            DemoSubcommands::Agent => {
+                commands::agent_demo::execute()?;
+            }
             DemoSubcommands::VerifierGate { db } => {
                 commands::demo::execute_verifier_gate(db).await?;
             }

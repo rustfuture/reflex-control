@@ -10,7 +10,7 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 > [!NOTE]
 > **Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
 
-![Accept, Retry and Escalate decisions for four task results](docs/demo/runtime-gate.gif)
+![Reflex Control guarding a simulated coding agent: two protected files, a force push and failing tests](docs/demo/agent.gif)
 
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
@@ -28,10 +28,10 @@ The prebuilt CLI does not require Rust. The installer downloads a release, check
 curl -fsSL https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 reflex --version
-reflex demo verifier-gate
+reflex demo agent
 ```
 
-The demo prints local policy decisions without an API key or model download. Prebuilt Linux binaries require glibc; unsupported platforms can build from source. On Windows, use the [PowerShell installer](install.ps1).
+The demo shows Reflex Control guarding a simulated coding agent, without an API key or model download. Prebuilt Linux binaries require glibc; unsupported platforms can build from source. On Windows, use the [PowerShell installer](install.ps1).
 
 <details><summary>Build from source</summary>
 

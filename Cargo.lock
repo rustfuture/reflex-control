@@ -1159,6 +1159,7 @@ dependencies = [
  "chrono",
  "clap",
  "cliclack",
+ "console",
  "rand 0.8.8",
  "reflex-calibration",
  "reflex-core",

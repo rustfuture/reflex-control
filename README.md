@@ -10,6 +10,8 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 > [!NOTE]
 > **Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
 
+![Accept, Retry and Escalate decisions for four task results](docs/demo/runtime-gate.gif)
+
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.
 - Tunes acceptance thresholds across labeled tasks with statistical confidence intervals.
@@ -95,6 +97,22 @@ Reflex Control evaluates agent execution steps through a multi-layer decision pi
 - Transient errors with remaining retry budget trigger an autonomous retry rather than an expensive model call.
 - Safe steps pass to a calibrated scoring gate that evaluates composite task quality against tuned thresholds.
 - Steps meeting the quality threshold finish autonomously (`Accept` or `Terminate`), avoiding unnecessary calls to larger models.
+
+```mermaid
+flowchart LR
+    DE["DeterministicEvidence"] --> EV["EvidenceVector"]
+    SE["SemanticEvidence"] --> EV
+    EV --> GHC["GuardedHybridComposer"]
+    GHC --> Veto["HARD SAFETY VETO RULES"]
+    GHC --> RetryRecovery["Transient Error Recovery"]
+    GHC --> RetryExhausted["Retry budget exhausted"]
+    GHC --> Quality["compute_clean_quality_index"]
+    Veto --> Escalate["Escalate"]
+    RetryRecovery --> Retry["Retry"]
+    RetryExhausted --> Escalate
+    Quality --> Accept["Accept"]
+    Quality --> Escalate
+```
 
 ---
 

@@ -8,7 +8,7 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > [!NOTE]
-> **Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
+> **Status:** Research prototype (v0.5.0). Tested on synthetic fixtures; not production-validated.
 
 ![Reflex Control guarding a simulated coding agent: two protected files, a force push and failing tests](docs/demo/agent.gif)
 

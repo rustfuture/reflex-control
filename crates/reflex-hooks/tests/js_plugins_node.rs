@@ -210,9 +210,20 @@ console.log(JSON.stringify({ gets }))
 fn opencode_plugin_rechecks_an_idle_received_during_turn_end_check() {
     let Some(node) = node() else { return };
     let fake = Fake::new(r#"{"action":"allow"}"#);
-    let out = run(&node, &opencode::plugin_source("opencode"), OPENCODE_IDLE_RACE_DRIVER, &fake.path());
+    let out = run(
+        &node,
+        &opencode::plugin_source("opencode"),
+        OPENCODE_IDLE_RACE_DRIVER,
+        &fake.path(),
+    );
     assert_eq!(out["gets"], 3);
-    assert_eq!(fake.calls().iter().filter(|c| c.as_str() == "ARGS hook opencode turn-end").count(), 3);
+    assert_eq!(
+        fake.calls()
+            .iter()
+            .filter(|c| c.as_str() == "ARGS hook opencode turn-end")
+            .count(),
+        3
+    );
 }
 
 const OPENCODE_RETRY_RACE_DRIVER: &str = r#"
@@ -244,10 +255,21 @@ console.log(JSON.stringify({ gets, prompts }))
 fn opencode_retry_discards_pending_idle_recheck() {
     let Some(node) = node() else { return };
     let fake = Fake::new(r#"{"action":"retry","reason":"continue"}"#);
-    let out = run(&node, &opencode::plugin_source("opencode"), OPENCODE_RETRY_RACE_DRIVER, &fake.path());
+    let out = run(
+        &node,
+        &opencode::plugin_source("opencode"),
+        OPENCODE_RETRY_RACE_DRIVER,
+        &fake.path(),
+    );
     assert_eq!(out["gets"], 1);
     assert_eq!(out["prompts"], 1);
-    assert_eq!(fake.calls().iter().filter(|c| c.as_str() == "ARGS hook opencode turn-end").count(), 1);
+    assert_eq!(
+        fake.calls()
+            .iter()
+            .filter(|c| c.as_str() == "ARGS hook opencode turn-end")
+            .count(),
+        1
+    );
 }
 
 #[test]

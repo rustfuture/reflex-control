@@ -15,7 +15,22 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 
 ## Quick start
 
-Rust **1.88** or newer is required.
+### Try the released CLI (macOS or Linux)
+
+The prebuilt CLI does not require Rust. The installer downloads a release, checks its SHA-256 checksum, and installs to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rustfuture/reflex-control/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+reflex --version
+reflex demo verifier-gate
+```
+
+The demo prints local policy decisions without an API key or model download. Prebuilt Linux binaries require glibc; unsupported platforms can build from source. On Windows, use the [PowerShell installer](install.ps1).
+
+### Build from source
+
+You need Git and Rust **1.88** or newer, including Cargo. Install the toolchain with [rustup](https://rustup.rs/); the first source build downloads Cargo dependencies.
 
 ### 1. Build
 

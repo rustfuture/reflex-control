@@ -5,7 +5,7 @@ Reflex Control decides whether an AI task can finish on its own, retry, or escal
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status:** Research prototype (v0.3.0). Tested on synthetic fixtures; not production-validated.
+**Status:** Research prototype (v0.4.0). Tested on synthetic fixtures; not production-validated.
 
 - Runs fast local checks (exit codes, test results, git diffs) alongside semantic risk signals.
 - Blocks high-risk actions like credential leaks or schema changes with a mandatory safety veto.

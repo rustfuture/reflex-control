@@ -5,6 +5,9 @@ All notable changes to Reflex Control are documented here.
 ## Unreleased
 
 - Added agent hooks for OpenCode, Kilo Code, Cline and pi. OpenCode, Kilo Code and pi get a small plugin or extension file (embedded in `reflex`, source in `integrations/`) that relays tool calls and finished turns to `reflex hook`; Cline gets a `PreToolUse` script. Cline has no hook that can send the agent back, so it is guarded before tool calls only; OpenCode, Kilo Code and Cline cannot ask for confirmation, so a risky command is refused (OpenCode and Kilo let the same call through when the agent repeats it). See `docs/agent-hooks.md`.
+
+## 0.4.0 - 2026-10-02
+
 - Added prebuilt release binaries and one-line installers. A `v*` tag now builds `reflex` for Linux (x86_64, aarch64), macOS (Intel, Apple Silicon) and Windows (x86_64) and publishes archives with SHA-256 checksums; `install.sh` (macOS/Linux) and `install.ps1` (Windows) download, verify and install the right one without Rust. See `docs/releasing.md`.
 - Added agent hooks: `reflex install` (interactive setup wizard), `reflex uninstall` and `reflex doctor`, plus a `reflex hook <agent> <event>` entry point. Targets are Claude Code (`PreToolUse` and `Stop` hooks) and a generic git pre-commit hook. Hooks block writes to protected paths, ask before risky shell commands, run the project's tests when the agent stops and send failures back for a limited number of retries. Settings live in `.reflex.toml`. Hook mode uses deterministic evidence only; see `docs/agent-hooks.md`. New crate `reflex-hooks`; new dependencies `toml`, `globset`, `dirs` and `cliclack`.
 - `reflex run` now rejects an unrecognised `--risk` value instead of silently treating it as `low`, which would have skipped the mandatory High/Critical gate on a typo.

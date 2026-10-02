@@ -1,5 +1,7 @@
 # Reflex Control
 
+![reflex-control project overview](docs/images/social-preview.png)
+
 Reflex Control decides whether an AI task can finish on its own, retry, or escalate to an expensive reasoning model.
 
 [![CI](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/reflex-control/actions/workflows/ci.yml)

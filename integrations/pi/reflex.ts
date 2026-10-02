@@ -10,7 +10,8 @@ const allow = { action: "allow" };
 function verdict(event, request, timeoutMs) {
   return new Promise((resolve) => {
     try {
-      const child = execFile("reflex", ["hook", "pi", event], { timeout: timeoutMs, windowsHide: true }, (_error, stdout) => {
+      const child = execFile("reflex", ["hook", "pi", event], { timeout: timeoutMs, windowsHide: true }, (error, stdout) => {
+        if (error) return resolve(allow);
         try {
           const v = JSON.parse(stdout);
           resolve(v && typeof v.action === "string" ? v : allow);

@@ -27,13 +27,17 @@ struct Fake {
 
 impl Fake {
     fn new(reply: &str) -> Fake {
+        Self::with_exit(reply, 0)
+    }
+
+    fn with_exit(reply: &str, exit_code: i32) -> Fake {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         let script = bin.join("reflex");
         std::fs::write(
             &script,
-            "#!/bin/sh\n{ echo \"ARGS $*\"; cat; echo; } >> \"$(dirname \"$0\")/../log\"\ncat \"$(dirname \"$0\")/../reply\"\n",
+            format!("#!/bin/sh\n{{ echo \"ARGS $*\"; cat; echo; }} >> \"$(dirname \"$0\")/../log\"\ncat \"$(dirname \"$0\")/../reply\"\nexit {exit_code}\n"),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -159,6 +163,11 @@ fn opencode_plugin_turns_verdicts_into_agent_calls() {
         );
     }
 
+    // A deliberate-looking verdict is ignored when reflex exits unsuccessfully.
+    let failed = Fake::with_exit(r#"{"action":"block","reason":"protected"}"#, 1);
+    let out = run(&node, &plugin, OPENCODE_DRIVER, &failed.path());
+    assert_eq!(out["results"]["first"], "ok");
+
     // No reflex on PATH: everything is allowed.
     let empty = tempfile::tempdir().unwrap();
     let out = run(&node, &plugin, OPENCODE_DRIVER, empty.path().as_os_str());
@@ -167,6 +176,78 @@ fn opencode_plugin_turns_verdicts_into_agent_calls() {
         json!({ "first": "ok", "second": "ok", "other": "ok" })
     );
     assert_eq!(out["seen"], json!([]));
+}
+
+const OPENCODE_IDLE_RACE_DRIVER: &str = r#"
+import plugin from "./plugin.mjs"
+const releases = []
+let gets = 0
+const client = {
+  session: {
+    get: async () => { gets++; if (gets <= 2) { await new Promise((resolve) => { releases[gets - 1] = resolve; resolveEntered[gets - 1]() }) } return { data: {} } },
+    promptAsync: async () => {},
+  },
+  app: { log: async () => {} }, tui: { showToast: async () => {} },
+}
+const signal = []
+const resolveEntered = []
+for (let i = 0; i < 2; i++) signal[i] = new Promise((resolve) => (resolveEntered[i] = resolve))
+const hooks = await plugin.server({ client, directory: "/work/proj" })
+const idle = () => hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+const first = idle()
+await signal[0]
+await idle()
+releases[0]()
+await signal[1]
+await idle()
+releases[1]()
+await first
+await new Promise((resolve) => setTimeout(resolve, 30))
+console.log(JSON.stringify({ gets }))
+"#;
+
+#[test]
+fn opencode_plugin_rechecks_an_idle_received_during_turn_end_check() {
+    let Some(node) = node() else { return };
+    let fake = Fake::new(r#"{"action":"allow"}"#);
+    let out = run(&node, &opencode::plugin_source("opencode"), OPENCODE_IDLE_RACE_DRIVER, &fake.path());
+    assert_eq!(out["gets"], 3);
+    assert_eq!(fake.calls().iter().filter(|c| c.as_str() == "ARGS hook opencode turn-end").count(), 3);
+}
+
+const OPENCODE_RETRY_RACE_DRIVER: &str = r#"
+import plugin from "./plugin.mjs"
+let release
+let entered
+const inGet = new Promise((resolve) => (entered = resolve))
+let gets = 0
+let prompts = 0
+const client = {
+  session: {
+    get: async () => { gets++; if (gets === 1) { entered(); await new Promise((resolve) => (release = resolve)) } return { data: {} } },
+    promptAsync: async () => { prompts++ },
+  },
+  app: { log: async () => {} }, tui: { showToast: async () => {} },
+}
+const hooks = await plugin.server({ client, directory: "/work/proj" })
+const idle = () => hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
+const first = idle()
+await inGet
+await idle()
+release()
+await first
+await new Promise((resolve) => setTimeout(resolve, 30))
+console.log(JSON.stringify({ gets, prompts }))
+"#;
+
+#[test]
+fn opencode_retry_discards_pending_idle_recheck() {
+    let Some(node) = node() else { return };
+    let fake = Fake::new(r#"{"action":"retry","reason":"continue"}"#);
+    let out = run(&node, &opencode::plugin_source("opencode"), OPENCODE_RETRY_RACE_DRIVER, &fake.path());
+    assert_eq!(out["gets"], 1);
+    assert_eq!(out["prompts"], 1);
+    assert_eq!(fake.calls().iter().filter(|c| c.as_str() == "ARGS hook opencode turn-end").count(), 1);
 }
 
 #[test]
@@ -302,6 +383,11 @@ fn pi_extension_turns_verdicts_into_pi_results() {
     let out = run(&node, pi::EXTENSION, PI_DRIVER, &fake.path());
     assert_eq!(out["results"]["settled"], Value::Null);
     assert_eq!(out["notes"], json!([["large change", "warning"]]));
+
+    // A valid block response from a failed process must fail open.
+    let failed = Fake::with_exit(r#"{"action":"block","reason":"protected"}"#, 1);
+    let out = run(&node, pi::EXTENSION, PI_DRIVER, &failed.path());
+    assert_eq!(out["results"]["noUi"], Value::Null);
 
     // No reflex: everything is allowed.
     let empty = tempfile::tempdir().unwrap();

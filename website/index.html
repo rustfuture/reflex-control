@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Reflex Control is an open-source Rust prototype that checks protected writes and selected risky commands, and runs configured tests when an AI coding agent attempts to finish.">
+  <meta name="theme-color" content="#f5f3ed">
+  <title>Reflex Control — Check the work before the agent finishes</title>
+  <style>
+    :root{--paper:#f5f3ed;--ink:#20231f;--muted:#63685e;--line:#d5d8cb;--orange:#b34625;--green:#426b4c;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:32px}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,Arial,sans-serif;font-size:16px;line-height:1.6}a{color:inherit;text-underline-offset:4px}button{font:inherit}a:focus-visible,button:focus-visible{outline:3px solid var(--orange);outline-offset:5px}button,a{-webkit-tap-highlight-color:transparent}.wrap{max-width:1220px;margin:auto;padding:0 48px}.skip{position:absolute;left:12px;top:-80px;background:var(--ink);color:white;padding:12px;z-index:5}.skip:focus{top:12px}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:30px 0;border-bottom:1px solid var(--line)}.brand{display:flex;gap:10px;align-items:center;font-weight:750;letter-spacing:-.6px;font-size:20px;text-decoration:none}.brand-icon{display:grid;place-items:center;width:29px;height:29px;background:var(--ink);color:var(--paper);font:700 19px var(--mono);border-radius:5px}nav{display:flex;gap:24px;font-size:14px}nav a{text-decoration:none}nav a:hover{text-decoration:underline}.eyebrow{display:flex;gap:12px;align-items:center;color:var(--muted);font:11px var(--mono);text-transform:uppercase;letter-spacing:1.3px}.dot{width:7px;height:7px;border-radius:50%;background:var(--orange)}.hero{display:grid;grid-template-columns:1.13fr 1fr;gap:64px;padding:76px 0 65px;align-items:center}h1{font-weight:560;font-size:clamp(42px,4.8vw,64px);line-height:1.08;letter-spacing:-3px;max-width:670px;margin:24px 0}h1 em{font-style:normal;color:var(--orange)}.lead{font-size:18px;max-width:530px;color:var(--muted);line-height:1.65}.actions{display:flex;align-items:center;flex-wrap:wrap;gap:24px;margin:28px 0}.primary{padding:12px 20px;color:var(--paper);background:var(--ink);border:1px solid var(--ink);text-decoration:none;border-radius:4px;font-size:14px;font-weight:600}.primary:hover{background:#3b4136}.text-link{font-size:14px}.small-note{color:var(--muted);font:11px var(--mono);line-height:1.7}.terminal{border:1px solid #363e31;background:#20251f;color:#f2f4ec;border-radius:7px;box-shadow:0 18px 36px -24px #20251f88;overflow:hidden}.terminal-top{display:flex;justify-content:space-between;border-bottom:1px solid #3e4637;padding:14px 18px;color:#b3bbaa;font:11px var(--mono)}.terminal-body{padding:23px;min-height:340px;font:12px/1.9 var(--mono)}.terminal-body p{margin:0 0 16px}.terminal-body .quiet{color:#a5af9b}.terminal-body .fail{color:#f1b591}.terminal-body .pass{color:#b6d4a9}.terminal-body .indent{padding-left:16px;border-left:1px solid #454f3b}.terminal-footer{border-top:1px solid #3e4637;padding:11px 18px;color:#a5af9b;font:10px var(--mono)}.metadata{display:flex;justify-content:space-between;gap:20px;padding:18px 0;border-block:1px solid var(--line);color:var(--muted);font:11px var(--mono);flex-wrap:wrap}.metadata strong{color:var(--ink);font-weight:600}section{padding:70px 0;border-bottom:1px solid var(--line)}.section-head{display:grid;grid-template-columns:1fr 1fr;gap:50px;align-items:end;margin-bottom:35px}.section-number{color:var(--orange);font:11px var(--mono);letter-spacing:1px}h2{font-size:36px;line-height:1.2;letter-spacing:-1.5px;font-weight:560;margin:14px 0 0}h3{font-size:22px;letter-spacing:-.5px;font-weight:600;margin:0 0 12px}.section-head p{color:var(--muted);margin:0;max-width:460px}.selector{display:flex;gap:0;border-bottom:1px solid var(--line);margin-bottom:24px}.scenario-button{border:0;border-bottom:2px solid transparent;padding:14px 19px;background:transparent;color:var(--muted);cursor:pointer;font-size:14px}.scenario-button[aria-pressed="true"]{border-bottom-color:var(--orange);color:var(--ink);font-weight:600}.scenario-button:hover{color:var(--orange)}.scenario{display:grid;grid-template-columns:1fr 1fr;gap:50px;padding:10px 0;align-items:center}.scenario p{color:var(--muted);margin:0;max-width:470px}.sample{padding:24px;background:#eceee5;border:1px solid var(--line);border-radius:4px;font:13px/1.9 var(--mono);overflow-wrap:anywhere}.sample .sample-label{color:var(--muted);font-size:10px;display:block;margin-bottom:12px;text-transform:uppercase;letter-spacing:.8px}.sample .outcome{display:block;color:var(--orange);margin-top:12px}.sample .outcome.good{color:var(--green)}.proof{display:grid;grid-template-columns:1.2fr 1fr;gap:70px}.proof p{color:var(--muted)}.proof .eyebrow{margin-bottom:18px}.evidence-list{padding:0;margin:0;list-style:none}.evidence-list li{padding:16px 0;border-bottom:1px solid var(--line)}.evidence-list li:first-child{padding-top:0}.evidence-list a{display:flex;justify-content:space-between;align-items:center;gap:24px;text-decoration:none;font-size:15px}.evidence-list a:hover{color:var(--orange)}.evidence-list span{display:block;color:var(--muted);font-size:12px;margin-top:5px}.status-label{display:inline-block;color:var(--orange);border:1px solid #cfb29f;padding:4px 8px;border-radius:3px;font:10px var(--mono);text-transform:uppercase;letter-spacing:.7px;margin-bottom:18px}.roadmap{display:grid;grid-template-columns:1fr 1fr;gap:70px}.roadmap p{color:var(--muted);max-width:500px}.roadmap .steps{padding:0;margin:0;list-style:none}.steps li{display:flex;align-items:baseline;gap:18px;padding:14px 0;border-bottom:1px solid var(--line);font-size:14px}.steps li span{font:11px var(--mono);color:var(--orange)}.founder{display:flex;justify-content:space-between;gap:60px;align-items:center}.founder h2{font-size:28px}.founder p{max-width:650px;color:var(--muted);font-size:15px}.project-links{font:12px/2.1 var(--mono);display:flex;flex-direction:column;flex-shrink:0}footer{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:25px 0;color:var(--muted);font:11px var(--mono)}footer a{text-decoration:none}footer a:hover{text-decoration:underline}
+    @media(max-width:950px){.wrap{padding:0 28px}.hero{gap:32px}h1{font-size:46px;letter-spacing:-2px}.terminal-body{padding:20px;font-size:11px}.proof,.roadmap{gap:35px}}@media(max-width:720px){.wrap{padding:0 22px}header{padding:22px 0}nav{gap:15px;font-size:12px}nav a:first-child{display:none}.hero{grid-template-columns:1fr;padding:48px 0;gap:30px}h1{font-size:48px;letter-spacing:-2px}.lead{font-size:17px}.terminal-body{min-height:0;font-size:12px}.section-head,.scenario,.proof,.roadmap{grid-template-columns:1fr;gap:24px}.section-head{margin-bottom:25px}section{padding:48px 0}h2{font-size:30px}.selector{overflow-x:auto}.scenario-button{flex:1;white-space:nowrap;padding:12px 9px;font-size:12px}.founder{display:block}.project-links{margin-top:24px}footer{align-items:flex-start;font-size:10px}.metadata{gap:12px;font-size:10px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="wrap">
+    <header>
+      <a href="#" class="brand" aria-label="Reflex Control home"><span class="brand-icon" aria-hidden="true">r.</span>Reflex Control</a>
+      <nav aria-label="Main navigation"><a href="#workflow">How it works</a><a href="#evidence">Evidence</a><a href="https://github.com/rustfuture/reflex-control">GitHub ↗</a></nav>
+    </header>
+    <main id="main">
+      <div class="hero">
+        <div>
+          <div class="eyebrow"><span class="dot" aria-hidden="true"></span>Open source · Rust · Early prototype</div>
+          <h1>Check the work before your AI agent calls it <em>done.</em></h1>
+          <p class="lead">Reflex Control checks protected-file writes and selected risky commands, then runs your configured tests when a coding agent attempts to finish.</p>
+          <div class="actions"><a class="primary" href="https://github.com/rustfuture/reflex-control">Explore the project ↗</a><a class="text-link" href="https://github.com/rustfuture/reflex-control/releases/tag/v0.5.0">Get v0.5.0</a></div>
+          <div class="small-note">For independent developers and small teams.<br>Start with the documented Claude Code integration.</div>
+        </div>
+        <div class="terminal" aria-label="Illustrative agent verification workflow">
+          <div class="terminal-top"><span>reflex / agent-turn</span><span>ILLUSTRATION</span></div>
+          <div class="terminal-body">
+            <p><span class="quiet">01 / agent requests a write</span><br>target: .env<br><span class="fail">→ write denied · protected path</span></p>
+            <p><span class="quiet">02 / agent attempts to finish</span><br>run: configured project tests<br><span class="fail">→ a test fails · return failure to agent</span></p>
+            <p class="indent">agent revises the change<br>run: configured project tests<br><span class="pass">→ tests pass · turn may finish</span></p>
+            <span class="quiet">A bounded retry loop. Human review still matters.</span>
+          </div>
+          <div class="terminal-footer">Simplified example. See the live test record for observed behavior.</div>
+        </div>
+      </div>
+      <div class="metadata"><span><strong>v0.5.0</strong> · Published October 2, 2026</span><span><strong>MIT</strong> · Source available</span><span><strong>Claude Code</strong> · Live test documented</span></div>
+      <section id="workflow">
+        <div class="section-head"><div><span class="section-number">01 / THE WORKFLOW</span><h2>Three checkpoints.<br>One agent turn.</h2></div><p>Hooks add checks around an agent's actions. Your configured rules determine what is protected and which tests count as verification.</p></div>
+        <div class="selector" role="group" aria-label="Choose a checkpoint">
+          <button class="scenario-button" type="button" data-scenario="writes" aria-pressed="true" aria-controls="scenario-panel">01 · Protected writes</button>
+          <button class="scenario-button" type="button" data-scenario="commands" aria-pressed="false" aria-controls="scenario-panel">02 · Risky commands</button>
+          <button class="scenario-button" type="button" data-scenario="tests" aria-pressed="false" aria-controls="scenario-panel">03 · Test feedback</button>
+        </div>
+        <div class="scenario" id="scenario-panel" aria-live="polite">
+          <div><h3 id="scenario-title">Set boundaries for file changes.</h3><p id="scenario-description">Check supported file writes against configured protected paths. The default policy includes environment files, private keys, and secrets directories.</p></div>
+          <div class="sample"><span class="sample-label">Illustrative checkpoint</span><span id="scenario-input">Write → .env</span><span class="outcome" id="scenario-outcome">Denied → protected path</span></div>
+        </div>
+        <p class="small-note" style="margin-top:22px">Hook behavior varies by agent. These checks are not a sandbox. <a href="https://github.com/rustfuture/reflex-control/blob/main/docs/agent-hooks.md">Read the adapter coverage and limitations ↗</a></p>
+      </section>
+      <section id="evidence" class="proof">
+        <div><span class="section-number">02 / WHAT EXISTS TODAY</span><h2>A released prototype.<br>A trace you can inspect.</h2><p>A documented Claude Code session includes blocked writes to protected paths and a failing test followed by a correction and a passing test. The record describes the setup, observations, and untested paths.</p><p class="small-note">This is early research evidence, not production validation. Other adapters have different levels of verification.</p></div>
+        <ul class="evidence-list">
+          <li><a href="https://github.com/rustfuture/reflex-control/blob/main/docs/evidence/claude-code-live-2026-10-02.md">Read the live Claude Code test <b aria-hidden="true">↗</b></a><span>October 2, 2026 · Setup and observed results</span></li>
+          <li><a href="https://github.com/rustfuture/reflex-control/releases/tag/v0.5.0">Inspect the v0.5.0 release <b aria-hidden="true">↗</b></a><span>macOS, Linux, and Windows packages</span></li>
+          <li><a href="https://github.com/rustfuture/reflex-control/actions">View the CI history <b aria-hidden="true">↗</b></a><span>Public build and check results</span></li>
+          <li><a href="https://github.com/rustfuture/reflex-control/blob/main/docs/agent-hooks.md">Check agent adapter coverage <b aria-hidden="true">↗</b></a><span>Supported hooks, constraints, and validation status</span></li>
+        </ul>
+      </section>
+      <section class="roadmap">
+        <div><span class="status-label">Planned · Not yet available</span><h2>Give test failures<br>more useful context.</h2><p>The next proposed feature is optional Claude API analysis of user-selected code diffs and test-failure evidence: explain the issue and suggest concrete next steps.</p><p class="small-note">The existing Claude Code hooks and this proposed API feature are separate. Content selection and sensitive-data handling need implementation and evaluation before user trials.</p></div>
+        <ol class="steps"><li><span>01</span>Build the optional Claude API integration</li><li><span>02</span>Evaluate explanations against known failures</li><li><span>03</span>Track request cost and cap retries</li><li><span>04</span>Try the workflow with initial volunteers</li></ol>
+      </section>
+      <section class="founder">
+        <div><span class="section-number">03 / THE BUILDER</span><h2>Built by Murat.</h2><p>I build Rust-based tools for AI-assisted software development, with a focus on verification, bounded execution, and inspectable results. Reflex Control sits alongside my agent runtime and repository intelligence experiments.</p></div>
+        <div class="project-links"><a href="https://github.com/rustfuture">GitHub / rustfuture ↗</a><a href="https://github.com/rustfuture/rust-agent-runtime">Rust Agent Runtime ↗</a><a href="https://github.com/rustfuture/repository-intelligence">Repository Intelligence ↗</a></div>
+      </section>
+    </main>
+    <footer><span>Reflex Control · Open-source research prototype</span><a href="https://github.com/rustfuture/reflex-control/issues">Questions & feedback ↗</a></footer>
+  </div>
+  <script>
+    const scenarios = {
+      writes: {title:'Set boundaries for file changes.',description:'Check supported file writes against configured protected paths. The default policy includes environment files, private keys, and secrets directories.',input:'Write → .env',outcome:'Denied → protected path',good:false},
+      commands: {title:'Ask before selected risky commands.',description:'With the Claude Code adapter, selected command patterns can be routed to an approval prompt. Coverage depends on the adapter and the command pattern; this is not a universal command sandbox.',input:'Bash → git push --force',outcome:'Ask → human approval requested',good:false},
+      tests: {title:'Feed failures back into the agent turn.',description:'Run configured tests when the agent attempts to finish. Return failures to the agent for a bounded number of retries; unresolved failures go back to human review.',input:'Stop → configured project tests',outcome:'Failure → feedback → bounded retry',good:true}
+    };
+    for (const button of document.querySelectorAll('.scenario-button')) {
+      button.addEventListener('click', () => {
+        const scenario = scenarios[button.dataset.scenario];
+        for (const item of document.querySelectorAll('.scenario-button')) item.setAttribute('aria-pressed', String(item === button));
+        document.getElementById('scenario-title').textContent = scenario.title;
+        document.getElementById('scenario-description').textContent = scenario.description;
+        document.getElementById('scenario-input').textContent = scenario.input;
+        document.getElementById('scenario-outcome').textContent = scenario.outcome;
+        document.getElementById('scenario-outcome').classList.toggle('good', scenario.good);
+      });
+    }
+  </script>
+</body>
+</html>

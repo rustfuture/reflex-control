@@ -18,5 +18,6 @@ pub mod config;
 pub mod detect;
 pub mod guard;
 pub mod install;
+pub mod rules;
 pub mod runtime;
 pub mod state;

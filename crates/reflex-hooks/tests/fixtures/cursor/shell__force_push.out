@@ -1,1 +1,1 @@
-{"permission":"ask","user_message":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs.","agent_message":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs."}
+{"permission":"ask","user_message":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs (rule `git.push-force`).","agent_message":"Reflex Control: this command force-pushes and can overwrite remote history. Confirm before it runs (rule `git.push-force`)."}

@@ -74,6 +74,9 @@ enum Commands {
     /// Show what is installed and which settings the hooks use
     Doctor,
 
+    /// Show what the hooks would decide for a command, a write or a read (runs nothing)
+    Check(commands::check::CheckArgs),
+
     /// Entry point called by agent hooks; reads the agent's JSON on stdin
     #[command(hide = true)]
     Hook {
@@ -290,6 +293,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(true) => {}
             Ok(false) => std::process::exit(1),
             Err(e) => exit_with_error(&e),
+        },
+        Commands::Check(args) => match commands::check::execute(args) {
+            Ok(code) => std::process::exit(code),
+            // Not 1: scripts read 1 as "would ask".
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(3);
+            }
         },
         Commands::Hook { agent, event } => commands::hook::execute(&agent, &event),
     }

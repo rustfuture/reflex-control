@@ -1,0 +1,1 @@
+Reflex Control: this command reads `.env`, which holds secrets (matches `.env`); its contents would be sent to the model provider.

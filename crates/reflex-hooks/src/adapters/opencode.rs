@@ -95,8 +95,14 @@ impl Flavor {
     }
 }
 
-/// Which tools write files or run commands, and where their paths or command are.
+/// Which tools read or write files or run commands, and where their paths or command are.
 fn classify(tool: &str, args: &Value) -> HookEvent {
+    if tool == "read" {
+        return match util::string_field(args, &["filePath"]) {
+            Some(p) => HookEvent::PreRead { paths: vec![p] },
+            None => HookEvent::Ignore,
+        };
+    }
     let paths = match tool {
         "write" | "edit" | "multiedit" => util::string_field(args, &["filePath"])
             .map(|p| vec![p])
@@ -216,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_shell_and_file_writing_tools_are_checked() {
+    fn only_the_shell_and_file_tools_are_checked() {
         let args = |v: Value| v;
         let write = |paths: &[&str]| HookEvent::PreWrite {
             paths: paths.iter().map(|p| p.to_string()).collect(),
@@ -265,8 +271,11 @@ mod tests {
             (
                 "read",
                 args(serde_json::json!({"filePath": "a"})),
-                HookEvent::Ignore,
+                HookEvent::PreRead {
+                    paths: vec!["a".into()],
+                },
             ),
+            ("read", args(serde_json::json!({})), HookEvent::Ignore),
             ("task", Value::Null, HookEvent::Ignore),
         ];
         for (tool, args, expected) in cases {

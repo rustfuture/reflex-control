@@ -64,7 +64,7 @@ pub fn parse(
 pub fn render(event: &HookEvent, verdict: &Verdict) -> Rendered {
     let is_tool = matches!(
         event,
-        HookEvent::PreWrite { .. } | HookEvent::PreShell { .. }
+        HookEvent::PreWrite { .. } | HookEvent::PreRead { .. } | HookEvent::PreShell { .. }
     );
     let reply = match verdict {
         Verdict::Block { reason } if is_tool => json!({ "action": "block", "reason": reason }),

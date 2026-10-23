@@ -3,7 +3,7 @@
 //! Install adds two hooks to `.claude/settings.json` (project scope) or
 //! `~/.claude/settings.json` (user scope):
 //!
-//! * `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit|Bash`, running
+//! * `PreToolUse` on `Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep`, running
 //!   `reflex hook claude-code pre-tool` (10 s timeout)
 //! * `Stop`, running `reflex hook claude-code stop` (600 s timeout, since it can run tests)
 //!
@@ -31,7 +31,7 @@ use std::path::PathBuf;
 
 pub struct ClaudeCode;
 
-const PRE_TOOL_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+const PRE_TOOL_MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep";
 const PRE_TOOL_COMMAND: &str = "reflex hook claude-code pre-tool";
 const STOP_COMMAND: &str = "reflex hook claude-code stop";
 
@@ -100,6 +100,15 @@ impl AgentAdapter for ClaudeCode {
                         Some(p) => HookEvent::PreWrite { paths: vec![p] },
                         None => HookEvent::Ignore,
                     },
+                    "Read" => match string_field(&payload.tool_input, "file_path") {
+                        Some(p) => HookEvent::PreRead { paths: vec![p] },
+                        None => HookEvent::Ignore,
+                    },
+                    // A search names a file or a directory; only a named file is checked.
+                    "Grep" => match string_field(&payload.tool_input, "path") {
+                        Some(p) => HookEvent::PreRead { paths: vec![p] },
+                        None => HookEvent::Ignore,
+                    },
                     "Bash" => match string_field(&payload.tool_input, "command") {
                         Some(command) => HookEvent::PreShell { command },
                         None => HookEvent::Ignore,
@@ -122,7 +131,7 @@ impl AgentAdapter for ClaudeCode {
     fn render(&self, event: &HookEvent, verdict: &Verdict) -> Rendered {
         let stdout = match (event, verdict) {
             (
-                HookEvent::PreWrite { .. } | HookEvent::PreShell { .. },
+                HookEvent::PreWrite { .. } | HookEvent::PreRead { .. } | HookEvent::PreShell { .. },
                 Verdict::Block { reason },
             ) => pre_tool_reply("deny", reason),
             (HookEvent::PreWrite { .. } | HookEvent::PreShell { .. }, Verdict::Ask { reason }) => {
@@ -197,13 +206,35 @@ impl AgentAdapter for ClaudeCode {
         let Ok(Value::Object(root)) = serde_json::from_str::<Value>(text) else {
             return false;
         };
-        ["PreToolUse", "Stop"].iter().all(|event| {
+        HOOK_SPECS.iter().all(|&(event, matcher, _, _)| {
             root.get("hooks")
-                .and_then(|h| h.get(*event))
+                .and_then(|h| h.get(event))
                 .and_then(Value::as_array)
-                .is_some_and(|groups| groups.iter().any(group_has_ours))
+                .is_some_and(|groups| {
+                    groups
+                        .iter()
+                        .any(|g| group_has_ours(g) && matcher_covers(g, matcher))
+                })
         })
     }
+}
+
+/// True if the group's matcher reaches every tool our hook needs. An install from before
+/// `Read|Grep` joined the matcher does not, so secret reads would go unchecked.
+fn matcher_covers(group: &Value, needed: Option<&str>) -> bool {
+    let Some(needed) = needed else {
+        return true;
+    };
+    let have = group
+        .get("matcher")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if have.is_empty() || have == "*" {
+        return true; // Claude Code: no matcher means every tool
+    }
+    let have: Vec<&str> = have.split('|').map(str::trim).collect();
+    needed.split('|').all(|tool| have.contains(&tool))
 }
 
 fn pre_tool_reply(decision: &str, reason: &str) -> String {
@@ -393,4 +424,27 @@ pub(super) fn remove_hooks(
         root.shift_remove("hooks");
     }
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_install_without_read_and_grep_in_the_matcher_is_not_complete() {
+        let group = |m: &str| json!({"matcher": m, "hooks": [{"type": "command", "command": PRE_TOOL_COMMAND}]});
+        let needed = Some(PRE_TOOL_MATCHER);
+        assert!(matcher_covers(&group(PRE_TOOL_MATCHER), needed));
+        assert!(matcher_covers(
+            &group("Bash|Read|Grep|Edit|Write|MultiEdit|NotebookEdit|Glob"),
+            needed
+        ));
+        assert!(matcher_covers(&group(""), needed));
+        assert!(matcher_covers(&group("*"), needed));
+        assert!(!matcher_covers(
+            &group("Edit|Write|MultiEdit|NotebookEdit|Bash"),
+            needed
+        ));
+        assert!(matcher_covers(&json!({"hooks": []}), None));
+    }
 }

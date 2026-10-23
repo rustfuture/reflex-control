@@ -29,6 +29,8 @@ mod util;
 pub enum HookEvent {
     /// A tool call that writes to these files.
     PreWrite { paths: Vec<String> },
+    /// A tool call that reads these files (read and search tools).
+    PreRead { paths: Vec<String> },
     /// A tool call that runs this shell command.
     PreShell { command: String },
     /// The agent finished its turn and wants to stop.

@@ -92,6 +92,10 @@ fn cursor_fixtures() {
 
         let got = handle("cursor", event, &rt);
 
+        // `UPDATE_GOLDEN=1 cargo test` rewrites the expected stdout; review the diff.
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(sibling("out"), &got.stdout).unwrap();
+        }
         let expected = std::fs::read_to_string(sibling("out")).unwrap();
         assert_eq!(got.stdout, expected, "stdout of {stem}");
         let exit_code = std::fs::read_to_string(sibling("exit"))

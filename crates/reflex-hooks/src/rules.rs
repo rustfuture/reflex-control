@@ -119,9 +119,23 @@ pub fn check(cmd: &str, args: &[String], stdin_texts: &[String]) -> Vec<Hit> {
             let recursive = args
                 .iter()
                 .any(|a| a == "--recursive" || has_short_flag(a, &['r', 'R']));
-            if recursive && (has(&["--no-preserve-root"]) || ops.iter().any(|t| is_broad_target(t)))
+            let git_dir = ops.iter().any(|t| {
+                let t = t.trim_end_matches(['/', '\\']);
+                t == ".git" || t.ends_with("/.git") || t.ends_with("\\.git")
+            });
+            if recursive
+                && (git_dir
+                    || has(&["--no-preserve-root"])
+                    || ops.iter().any(|t| is_broad_target(t)))
             {
-                hits.push(hit("fs.rm-rf-broad", "recursively deletes a broad target"));
+                hits.push(hit(
+                    "fs.rm-rf-broad",
+                    if git_dir {
+                        "recursively deletes a repository's .git directory"
+                    } else {
+                        "recursively deletes a broad target"
+                    },
+                ));
             }
         }
         "find" if find_deletes_broadly(args) => {
@@ -355,7 +369,10 @@ fn git_rules(args: &[String], hits: &mut Vec<Hit>) {
     match sub {
         "push" => {
             let forced = rest.iter().any(|a| {
-                a == "--force" || short_only(a, 'f') || (a.starts_with('+') && a.len() > 1)
+                a == "--force"
+                    || a == "--mirror"
+                    || short_only(a, 'f')
+                    || (a.starts_with('+') && a.len() > 1)
             });
             if forced {
                 hits.push(hit(
@@ -363,7 +380,7 @@ fn git_rules(args: &[String], hits: &mut Vec<Hit>) {
                     "force-pushes and can overwrite remote history",
                 ));
             }
-            if has(&["--delete"])
+            if has(&["--delete", "--prune"])
                 || short_only_any(rest, 'd')
                 || ops.iter().any(|o| o.len() > 1 && o.starts_with(':'))
             {

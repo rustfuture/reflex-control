@@ -4,6 +4,20 @@ All notable changes to Reflex Control are documented here.
 
 ## Unreleased
 
+- Fixed: a backslash-newline continued line (`git \` then newline then `push --force`) was read as the first word only and a continued `rm -rf /` or `git push --force` was allowed. The shell removes the pair before parsing, and so does the guard now (outside single quotes, where it is literal). Found by the metamorphic test.
+
+- Fixed: `git push --mirror` and `git push --prune` now hit `git.push-force` and `git.push-delete` (both rewrite or delete remote history; the short `-f`/`-d` spellings were matched, the long ones were not).
+
+- Fixed: `rm -rf .git`, `.git/` and `sub/.git` now hit `fs.rm-rf-broad` (the repository's whole history).
+
+- Fixed: `eval 'rm -rf /'`, `eval "git push --force"` and other literal `eval` arguments are checked as the command line they run (a substitution in them, `eval "$(…)"`, still is not).
+
+- Fixed: `tar`, `zip`, `gzip`, `zstd`, `xz` and `bzip2` are secret readers, so `tar cf - .env`, `zip /tmp/x.zip .env` and `gzip -c .env > /tmp/x.gz` are blocked.
+
+- Fixed: `git diff`, `git show`, `git log`, `git blame` and `git cat-file` of a secret path (`git diff .env`, `git show HEAD:.env`) are blocked; the diff prints the file.
+
+- New tests and measurements, described in [docs/validation.md](docs/validation.md): a metamorphic test over 1 872 rewrites of the corpus (`tests/metamorphic.rs`), a 125-command bypass matrix with recorded blind spots (`tests/bypass_matrix.tsv`), an adapter parity test that parses every corpus command through all seven adapters (`tests/adapter_parity.rs`), and two scripts under `bench/`: `latency.py` (~7 ms per hook call on macOS) and `traffic.py` (what would stop in an agent's real shell history). The corpus grew to 188 commands (54 allow, 75 ask, 59 block).
+
 - Closed ways around protected-path writes in the shell check: `ln` (both the link and its target), `truncate`, `touch`, `chmod`/`chown`/`chgrp`, `curl -o`/`--output`, `wget -O`, `git checkout`/`restore`/`rm`/`mv` on a protected path (`git restore --staged` and `git rm --cached` stay allowed), the destination of `rsync` and `scp`, and `perl -i`/`ruby -i`.
 
 - The shell check now reads interpreter code: `python -c`, `node -e`/`--eval`, `bun`, `deno eval`, `perl -e`, `ruby -e` and `php -r`, and code fed to an interpreter through a heredoc or here-string. A string literal that names a protected path counts as a write when the code also contains a write hint (`write`, `remove`, `unlink`, `rename`, a `'w'` open mode, ...). Both `python3 -c "open('.env','w')"` and `ln -sf x .env` got through the 0.5.0 check.

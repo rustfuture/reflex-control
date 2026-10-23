@@ -98,7 +98,7 @@ settings file, so it can be installed next to another hook. That combination was
   been run in real sessions: two short headless runs with one model, on macOS
   ([2026-10-02](evidence/claude-code-live-2026-10-02.md),
   [2026-10-22](evidence/claude-code-live-2026-10-22.md)). The other agents were checked against
-  their source code or secondary descriptions. The corpus of 179 commands is a regression test,
+  their source code or secondary descriptions. The corpus of 188 commands is a regression test,
   not a measure of how often the guard is right. See [agent-hooks.md](agent-hooks.md#limits)
   for the limits in detail.
 

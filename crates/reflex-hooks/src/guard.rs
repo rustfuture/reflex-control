@@ -602,7 +602,61 @@ impl ShellPolicy<'_> {
     }
 }
 
+/// Removes backslash-newline pairs, which a shell deletes before it parses the line.
+/// Outside single quotes they join the two lines (`git \` + newline + `push` is
+/// `git push`); inside single quotes they are literal and stay.
+fn strip_line_continuations(command: &str) -> String {
+    let mut out = String::with_capacity(command.len());
+    let mut chars = command.chars().peekable();
+    let mut single = false;
+    let mut double = false;
+    while let Some(c) = chars.next() {
+        match (single, double, c) {
+            (true, _, '\'') => {
+                single = false;
+                out.push(c);
+            }
+            (true, _, _) => out.push(c),
+            (_, true, '"') => {
+                double = false;
+                out.push(c);
+            }
+            (_, true, '\\') if chars.peek() == Some(&'\n') => {
+                chars.next();
+            }
+            (_, true, '\\') => {
+                out.push(c);
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            (_, true, _) => out.push(c),
+            (_, _, '\'') => {
+                single = true;
+                out.push(c);
+            }
+            (_, _, '"') => {
+                double = true;
+                out.push(c);
+            }
+            (_, _, '\\') if chars.peek() == Some(&'\n') => {
+                chars.next();
+            }
+            (_, _, '\\') => {
+                out.push(c);
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            (_, _, _) => out.push(c),
+        }
+    }
+    out
+}
+
 fn analyze(command: &str, policy: &ShellPolicy, depth: usize) -> Vec<Finding> {
+    let command = strip_line_continuations(command);
+    let command = command.as_str();
     let mut findings = Vec::new();
     // `source .env` is allowed (it uses secrets without showing them), but not when a
     // later command in the same line prints the variables it loaded.
@@ -787,7 +841,8 @@ const READERS: &[&str] = &[
     "cat", "tac", "less", "more", "most", "head", "tail", "nl", "strings", "xxd", "od", "hexdump",
     "hd", "base64", "base32", "bat", "batcat", "cut", "sort", "uniq", "awk", "gawk", "mawk", "sed",
     "grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "yq", "diff", "cmp", "comm", "paste",
-    "join", "fold", "fmt", "pr", "column", "iconv", "dos2unix", "unix2dos", "xmllint",
+    "join", "fold", "fmt", "pr", "column", "iconv", "dos2unix", "unix2dos", "xmllint", "tar",
+    "zip", "gzip", "zstd", "xz", "bzip2",
 ];
 
 /// Options that give a reader its pattern or program, for readers whose first operand
@@ -848,6 +903,17 @@ fn analyze_reads(
         "scp" | "rsync" => {
             for t in all_but_last().filter(|t| !is_remote_spec(t)) {
                 check_read_or_dir(t, policy, out);
+            }
+        }
+        // `git diff .env`, `git show HEAD:.env`: the diff prints the file's contents.
+        "git" => {
+            if let Some((sub, rest)) = crate::rules::git_subcommand(args) {
+                if matches!(sub, "diff" | "show" | "log" | "blame" | "cat-file") {
+                    for a in rest.iter().filter(|a| !is_flag(a)) {
+                        let path = a.split_once(':').map(|(_, p)| p).unwrap_or(a);
+                        check_read(path, policy, out);
+                    }
+                }
             }
         }
         "openssl" => {
@@ -1345,6 +1411,14 @@ fn analyze_segment(seg: &Segment, policy: &ShellPolicy, depth: usize, out: &mut 
                         out.extend(analyze(text, policy, depth + 1));
                     }
                 }
+            }
+        }
+        // `eval 'rm -rf /'` runs its arguments as a command line, in this shell. A
+        // substitution in them (`eval "$(...)"`) is still invisible.
+        "eval" => {
+            if depth < 3 && !args.is_empty() {
+                let script = args.join(" ");
+                out.extend(analyze(&script, policy, depth + 1));
             }
         }
         "ln" => {

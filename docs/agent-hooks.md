@@ -448,12 +448,14 @@ The test gate runs one command. It cannot judge whether a change is right beyond
 pass", and a suite that exits with 126, 127 or 9009 for its own reasons is read as "could not
 run".
 
-How this was checked: the guard runs against a corpus of 179 shell commands, each with the
+How this was checked: the guard runs against a corpus of 188 shell commands, each with the
 expected verdict
 ([`guard_corpus.tsv`](../crates/reflex-hooks/tests/fixtures/guard_corpus.tsv)): 54 allow,
-70 ask and 55 block. It includes the command shapes of reported incidents and a "known gaps"
+75 ask and 59 block. It includes the command shapes of reported incidents and a "known gaps"
 section with the cases above. It is a regression test, not a measurement of how often the
-guard is right. The Claude Code adapter was also run in two short headless sessions
+guard is right. [validation.md](validation.md) covers the measurements that do not take their
+expected answers from the guard: 1 872 metamorphic rewrites, a bypass matrix, the seven
+adapters parsed side by side, the hook's latency and a scan of real agent shell history. The Claude Code adapter was also run in two short headless sessions
 ([2026-10-02](evidence/claude-code-live-2026-10-02.md),
 [2026-10-22](evidence/claude-code-live-2026-10-22.md)). For a comparison with other tools and
 what Reflex does not do, see [comparison.md](comparison.md).

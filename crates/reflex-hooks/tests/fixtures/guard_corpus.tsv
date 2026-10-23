@@ -69,6 +69,10 @@ block	-	python3 -c "import json; json.dump({}, open('.claude/settings.local.json
 
 # ── Secret reads ───────────────────────────────────────────────────────────────────
 block	-	cat .env
+block	-	tar cf - .env
+block	-	zip /tmp/x.zip .env
+block	-	gzip -c .env > /tmp/x.gz
+block	-	git diff .env
 block	-	cat .env | grep KEY
 block	-	grep -i password .env.production
 block	-	head -c 200 server.key
@@ -89,6 +93,9 @@ block	-	git commit -m "$(cat <<'EOF'\ndon't\nEOF\n)"; cat .env
 
 # ── Destructive commands ───────────────────────────────────────────────────────────
 ask	fs.rm-rf-broad	rm -rf /
+ask	fs.rm-rf-broad	rm -rf .git
+ask	fs.rm-rf-broad	eval 'rm -rf /'
+ask	fs.rm-rf-broad	rm \\n-rf /
 ask	fs.rm-rf-broad	rm -rf ~
 ask	fs.rm-rf-broad	sudo rm -rf /usr
 ask	fs.rm-rf-broad	rm -rf *
@@ -101,6 +108,8 @@ ask	fs.disk	sudo dd if=ubuntu.iso of=/dev/disk4 bs=4m
 ask	fs.disk	diskutil eraseDisk APFS Empty disk4
 ask	git.push-force	git push --force origin main
 ask	git.push-force	git push -f
+ask	git.push-force	git push --mirror origin
+ask	git.push-delete	git push --prune origin
 ask	fs.rm-rf-broad	sudo -u deploy rm -rf /
 ask	git.reset-hard	for d in */; do (cd "$d" && git reset --hard); done
 ask	container.prune	docker compose -f docker-compose.dev.yml down -v

@@ -335,7 +335,7 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 cargo test --workspace --all-targets
 ```
 
-The test suite covers decision logic, security veto rules, threshold calibration, telemetry persistence, API integrations, and fixture split integrity. The hooks also run against a corpus of 179 shell commands with the expected verdict for each ([`guard_corpus.tsv`](crates/reflex-hooks/tests/fixtures/guard_corpus.tsv)), including a list of known gaps.
+The test suite covers decision logic, security veto rules, threshold calibration, telemetry persistence, API integrations, and fixture split integrity. The hooks also run against a corpus of 188 shell commands with the expected verdict for each ([`guard_corpus.tsv`](crates/reflex-hooks/tests/fixtures/guard_corpus.tsv)), including a list of known gaps, a metamorphic test (rewrites that do not change a command must not change its verdict), a bypass matrix of the same dangerous act written another way ([`bypass_matrix.tsv`](crates/reflex-hooks/tests/fixtures/bypass_matrix.tsv)) and an adapter parity test. [docs/validation.md](docs/validation.md) reports what these measure, the hook's latency, and what happens on real agent traffic.
 
 ---
 

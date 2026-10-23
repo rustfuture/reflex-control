@@ -119,6 +119,8 @@ Blocked in every agent's shell: readers such as `cat`, `head`, `grep`, `sed`, `j
 
 Not covered: the read tools of Cursor, Cline and pi (only their shell commands are checked), and `grep -r` over a directory that holds secrets. Loading a secret and printing it in the same command (`source .env && echo $API_KEY`) is blocked; printing it in a later, separate command is not seen. Details: [docs/agent-hooks.md](docs/agent-hooks.md#secret-reads).
 
+To decide case by case instead, set `read_action = "ask"` under `[protect]`: Claude Code and Cursor then ask you before a secret read, and you can allow that one read. Agents that cannot ask still refuse it. A protected write is always blocked.
+
 ### Destructive commands
 
 A catalog of 22 rules, each with a stable id such as `git.reset-hard`, `fs.rm-rf-broad`, `db.sql`, `container.prune`, `k8s.delete`, `iac.destroy`, `cloud.delete` and `http.delete`. A match asks you first (Claude Code, Cursor, pi); the reason ends with the rule id. Wrappers such as `sudo`, `env`, `npx` and `uv run` are seen through. Agents that cannot ask (Codex CLI, Cline, OpenCode, Kilo Code) refuse the command.

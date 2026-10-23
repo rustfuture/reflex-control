@@ -33,7 +33,7 @@
 //! composer without semantic signals treats every failure as non-transient and would
 //! escalate at once, which is the `ask` behaviour. `retry-then-ask` needs its own budget.
 
-use crate::config::{Config, OnFailure};
+use crate::config::{Config, OnFailure, ReadAction};
 use crate::rules;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use reflex_core::{DeterministicEvidence, EvidenceVector, ReflexAction};
@@ -314,6 +314,8 @@ pub struct Guard {
     write: PathPolicy,
     own: Vec<PathPolicy>,
     read: PathPolicy,
+    /// Ask instead of refusing when a read hits `read` (`protect.read_action = "ask"`).
+    read_asks: bool,
     allow: Vec<String>,
     /// Home directory, to resolve `~/` and `$HOME/` in shell commands.
     home: Option<String>,
@@ -328,6 +330,7 @@ impl Guard {
             write,
             own: Vec::new(),
             read: PathPolicy::empty(&root),
+            read_asks: false,
             allow: Vec::new(),
             home: None,
         }
@@ -353,6 +356,7 @@ impl Guard {
             write: PathPolicy::new(&cfg.protect.paths, root)?,
             own,
             read: PathPolicy::new(&cfg.protect.read, root)?,
+            read_asks: cfg.protect.read_action == ReadAction::Ask,
             allow: cfg.commands.allow.clone(),
             home: home.map(|h| normalize_separators(&h.to_string_lossy())),
         })
@@ -377,8 +381,9 @@ impl Guard {
     /// `docker|podman exec` or `kubectl|oc exec --` runs. It does not
     /// expand variables, globs or `$(...)`, and it cannot see what a script file does.
     ///
-    /// A protected-path write gives `Block`; a destructive command gives `Ask`; the first
-    /// `Block` wins over any `Ask`. Shell writes are resolved against `cwd` (the agent's
+    /// A protected-path write gives `Block`; a destructive command gives `Ask`; a secret
+    /// read gives `Block`, or `Ask` with `protect.read_action = "ask"`. The first `Block`
+    /// wins over any `Ask`. Shell writes are resolved against `cwd` (the agent's
     /// directory), or the project root when it is unknown; `cd` inside the command is not
     /// tracked.
     pub fn check_command(&self, command: &str, cwd: Option<&Path>) -> Verdict {
@@ -389,7 +394,7 @@ impl Guard {
                 .map(|dir| normalize_separators(&dir.to_string_lossy()))
                 .unwrap_or_else(|| self.write.root.clone()),
         };
-        let mut ask: Option<(&'static str, String)> = None;
+        let mut ask: Option<String> = None;
         for finding in analyze(command, &policy, 0) {
             match finding {
                 Finding::Protected { path, pattern } => {
@@ -403,28 +408,32 @@ impl Guard {
                     };
                 }
                 Finding::Secret { path, pattern } => {
-                    return Verdict::Block {
-                        reason: secret_reason(&path, &pattern, "this command reads"),
-                    };
+                    let what = "this command reads";
+                    if !self.read_asks {
+                        return Verdict::Block {
+                            reason: secret_reason(&path, &pattern, what),
+                        };
+                    }
+                    ask.get_or_insert_with(|| secret_ask_reason(&path, &pattern, what));
                 }
                 Finding::SecretPrinted { path, pattern } => {
-                    return Verdict::Block {
-                        reason: secret_reason(
-                            &path,
-                            &pattern,
-                            "this command prints variables loaded from",
-                        ),
-                    };
+                    let what = "this command prints variables loaded from";
+                    if !self.read_asks {
+                        return Verdict::Block {
+                            reason: secret_reason(&path, &pattern, what),
+                        };
+                    }
+                    ask.get_or_insert_with(|| secret_ask_reason(&path, &pattern, what));
                 }
                 Finding::Dangerous { rule, why } => {
-                    ask.get_or_insert((rule, why));
+                    ask.get_or_insert_with(|| {
+                        format!("Reflex Control: {why}. Confirm before it runs (rule `{rule}`).")
+                    });
                 }
             }
         }
         match ask {
-            Some((rule, why)) => Verdict::Ask {
-                reason: format!("Reflex Control: {why}. Confirm before it runs (rule `{rule}`)."),
-            },
+            Some(reason) => Verdict::Ask { reason },
             None => Verdict::Allow,
         }
     }
@@ -458,8 +467,15 @@ impl Guard {
                 .matching_pattern(path)
                 .or_else(|| self.read.matching_pattern(&below));
             if let Some(pattern) = pattern {
-                return Verdict::Block {
-                    reason: secret_reason(path, pattern, "this tool call reads"),
+                let what = "this tool call reads";
+                return if self.read_asks {
+                    Verdict::Ask {
+                        reason: secret_ask_reason(path, pattern, what),
+                    }
+                } else {
+                    Verdict::Block {
+                        reason: secret_reason(path, pattern, what),
+                    }
                 };
             }
         }
@@ -527,6 +543,13 @@ fn secret_reason(path: &str, pattern: &str, what: &str) -> String {
          contents would be sent to the model provider. Use it without reading it, for \
          example `set -a; source .env; set +a` or `--env-file .env`, or ask the user. To \
          allow it, the user can edit `protect.read` in .reflex.toml."
+    )
+}
+
+fn secret_ask_reason(path: &str, pattern: &str, what: &str) -> String {
+    format!(
+        "Reflex Control: {what} `{path}`, which holds secrets (matches `{pattern}`); its \
+         contents would be sent to the model provider. Allow this read only if you want that."
     )
 }
 
@@ -2364,6 +2387,49 @@ mod tests {
 
     fn project_guard(cfg: &Config) -> Guard {
         Guard::from_config(cfg, Path::new("/work/proj"), Some(Path::new("/home/me"))).unwrap()
+    }
+
+    #[test]
+    fn read_action_ask_turns_secret_reads_into_questions_but_not_writes() {
+        let mut cfg = Config::default();
+        assert_eq!(
+            verdict_kind(&project_guard(&cfg).check_command("sed -n 1,40p .env", None)),
+            "block",
+            "default stays block"
+        );
+        cfg.protect.read_action = ReadAction::Ask;
+        let g = project_guard(&cfg);
+        let cases = [
+            ("sed -n 1,40p .env", "ask"),
+            ("source .env && echo $API_KEY", "ask"),
+            ("cat .env; git push --force", "ask"),
+            // A protected write still wins over the question.
+            ("cat .env > .env.local", "block"),
+            ("cat .env; echo x > migrations/001.sql", "block"),
+            ("ls", "allow"),
+        ];
+        for (cmd, expected) in cases {
+            assert_eq!(
+                verdict_kind(&g.check_command(cmd, None)),
+                expected,
+                "command {cmd:?}"
+            );
+        }
+        let Verdict::Ask { reason } = g.check_command("sed -n 1,40p .env", None) else {
+            panic!("expected ask");
+        };
+        assert!(
+            reason.contains("Allow this read only if you want that"),
+            "{reason}"
+        );
+        let Verdict::Ask { reason } = g.check_reads(&["/work/proj/.env"]) else {
+            panic!("a read tool asks too");
+        };
+        assert!(reason.contains("this tool call reads"), "{reason}");
+        assert_eq!(
+            verdict_kind(&g.check_reads(&["/work/proj/src/main.rs"])),
+            "allow"
+        );
     }
 
     #[test]

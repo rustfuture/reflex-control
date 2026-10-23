@@ -134,9 +134,10 @@ impl AgentAdapter for ClaudeCode {
                 HookEvent::PreWrite { .. } | HookEvent::PreRead { .. } | HookEvent::PreShell { .. },
                 Verdict::Block { reason },
             ) => pre_tool_reply("deny", reason),
-            (HookEvent::PreWrite { .. } | HookEvent::PreShell { .. }, Verdict::Ask { reason }) => {
-                pre_tool_reply("ask", reason)
-            }
+            (
+                HookEvent::PreWrite { .. } | HookEvent::PreRead { .. } | HookEvent::PreShell { .. },
+                Verdict::Ask { reason },
+            ) => pre_tool_reply("ask", reason),
             (HookEvent::TurnEnd { .. }, Verdict::RetryAgent { reason }) => {
                 format!("{}\n", json!({ "decision": "block", "reason": reason }))
             }
@@ -429,6 +430,30 @@ pub(super) fn remove_hooks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_tool_event_turns_ask_into_an_ask_reply() {
+        // `protect.read_action = "ask"` makes reads ask; a read that falls through
+        // would print nothing, which Claude Code takes as allow.
+        let ask = Verdict::Ask { reason: "r".into() };
+        for event in [
+            HookEvent::PreWrite {
+                paths: vec!["a".into()],
+            },
+            HookEvent::PreRead {
+                paths: vec!["a".into()],
+            },
+            HookEvent::PreShell {
+                command: "a".into(),
+            },
+        ] {
+            let out = ClaudeCode.render(&event, &ask).stdout;
+            assert!(
+                out.contains("\"permissionDecision\":\"ask\""),
+                "{event:?}: {out}"
+            );
+        }
+    }
 
     #[test]
     fn an_install_without_read_and_grep_in_the_matcher_is_not_complete() {

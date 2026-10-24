@@ -143,6 +143,7 @@ read = [
     ".netrc",
     ".pgpass",
 ]
+read_action = "block" # "block" | "ask" (ask: the user can allow one read)
 # Agents may not edit .reflex.toml or the hook files `reflex install` wrote.
 own_files = true
 
@@ -267,6 +268,14 @@ report only metadata, such as `wc`, `ls`, `stat` and `test -f`.
 
 When a read is blocked, the message tells the agent to use the file without reading it, for
 example `set -a; source .env; set +a` or `--env-file .env`, or to ask you.
+
+**Asking instead of blocking.** With `read_action = "ask"` under `[protect]`, a secret read
+asks you instead of being refused, so you can allow one read on purpose (for example
+`sed -n 1,40p .env` while debugging). This covers shell commands and the read tools that are
+wired (Claude Code `Read` and `Grep`, OpenCode and Kilo Code `read`). Claude Code and Cursor
+show the question; Codex CLI, Cline, OpenCode and Kilo Code cannot ask, so the read is refused
+there as before (OpenCode and Kilo Code let an identical repeat through, as for other asks).
+A write to a protected path in the same command is still blocked. The default is `"block"`.
 
 **By agent.**
 

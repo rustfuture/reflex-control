@@ -31,3 +31,4 @@ thiserror = { workspace = true }
 reflex-hooks = { workspace = true }
 cliclack = { workspace = true }
 console = { workspace = true }
+dirs = { workspace = true }

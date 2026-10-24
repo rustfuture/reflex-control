@@ -4,6 +4,55 @@ All notable changes to Reflex Control are documented here.
 
 ## Unreleased
 
+- Fixed: a backslash-newline continued line (`git \` then newline then `push --force`) was read as the first word only and a continued `rm -rf /` or `git push --force` was allowed. The shell removes the pair before parsing, and so does the guard now (outside single quotes, where it is literal). Found by the metamorphic test.
+
+- Fixed: `git push --mirror` and `git push --prune` now hit `git.push-force` and `git.push-delete` (both rewrite or delete remote history; the short `-f`/`-d` spellings were matched, the long ones were not).
+
+- Fixed: `rm -rf .git`, `.git/` and `sub/.git` now hit `fs.rm-rf-broad` (the repository's whole history).
+
+- Fixed: `eval 'rm -rf /'`, `eval "git push --force"` and other literal `eval` arguments are checked as the command line they run (a substitution in them, `eval "$(…)"`, still is not).
+
+- Fixed: `tar`, `zip`, `gzip`, `zstd`, `xz` and `bzip2` are secret readers, so `tar cf - .env`, `zip /tmp/x.zip .env` and `gzip -c .env > /tmp/x.gz` are blocked.
+
+- Fixed: `git diff`, `git show`, `git log`, `git blame` and `git cat-file` of a secret path (`git diff .env`, `git show HEAD:.env`) are blocked; the diff prints the file.
+
+- New tests and measurements, described in [docs/validation.md](docs/validation.md): a metamorphic test over 1 872 rewrites of the corpus (`tests/metamorphic.rs`), a 125-command bypass matrix with recorded blind spots (`tests/bypass_matrix.tsv`), an adapter parity test that parses every corpus command through all seven adapters (`tests/adapter_parity.rs`), and two scripts under `bench/`: `latency.py` (~7 ms per hook call on macOS) and `traffic.py` (what would stop in an agent's real shell history). The corpus grew to 188 commands (54 allow, 75 ask, 59 block).
+
+- Closed ways around protected-path writes in the shell check: `ln` (both the link and its target), `truncate`, `touch`, `chmod`/`chown`/`chgrp`, `curl -o`/`--output`, `wget -O`, `git checkout`/`restore`/`rm`/`mv` on a protected path (`git restore --staged` and `git rm --cached` stay allowed), the destination of `rsync` and `scp`, and `perl -i`/`ruby -i`.
+
+- The shell check now reads interpreter code: `python -c`, `node -e`/`--eval`, `bun`, `deno eval`, `perl -e`, `ruby -e` and `php -r`, and code fed to an interpreter through a heredoc or here-string. A string literal that names a protected path counts as a write when the code also contains a write hint (`write`, `remove`, `unlink`, `rename`, a `'w'` open mode, ...). Both `python3 -c "open('.env','w')"` and `ln -sf x .env` got through the 0.5.0 check.
+
+- Heredoc and here-string bodies are now read according to the program that gets them: a shell parses them as shell, an interpreter scans them as code, a database client checks them as SQL, and anything else (`cat`, `tee`) treats them as data. `cat <<EOF > notes.md` with `rm -rf /` in the body is allowed; `bash <<EOF` with `echo x > .env` is blocked.
+
+- `~/`, `$HOME/` and `${HOME}/` at the start of a path in a shell command are resolved to the home directory before matching.
+
+- Path patterns in `protect.paths` take exceptions with a leading `!`. The defaults gain `!.env.example`, `!.env.sample` and `!.env.template`, so those files can be edited although `.env.*` matches them. An existing `.reflex.toml` keeps its `paths` as written; add the three lines to get the exceptions.
+
+- Added a destructive-command catalog (`crates/reflex-hooks/src/rules.rs`): 22 rules with stable ids (`fs.rm-rf-broad`, `fs.find-delete`, `fs.chmod-broad`, `fs.disk`, `git.push-force`, `git.commit-no-verify`, `git.reset-hard`, `git.clean-force`, `git.discard-changes`, `git.branch-force-delete`, `git.stash-drop`, `git.push-delete`, `git.history-rewrite`, `db.sql`, `db.drop`, `db.redis-flush`, `db.orm-reset`, `container.prune`, `k8s.delete`, `iac.destroy`, `cloud.delete`, `http.delete`). It replaces the three fixed checks (`rm -rf` on a broad target, force push, `git commit --no-verify`), which are now `fs.rm-rf-broad`, `git.push-force` and `git.commit-no-verify`. It also covers Windows (`rmdir /s`, `del /s`, `Remove-Item -Recurse` on a drive root or broad target), SQL sent to a database client (in a heredoc or here-string, piped from `echo`, `printf` or `cat <<EOF`, or run inside a container with `docker|podman exec` or `kubectl|oc exec --`), and HTTP `DELETE` requests and GraphQL delete mutations sent with `curl` (the shape of the April 2026 PocketOS incident).
+
+- Wrappers are seen through when matching rules and paths: `sudo`, `doas`, `env`, `command`, `nohup`, `time`, `exec`, `nice`, `npx`, `pnpx`, `bunx`, `uvx`, `bundle exec`, `poetry run`, `uv run`, `pipenv run`, `pdm run`, `hatch run`, `rye run`, `pnpm exec`/`dlx`, `yarn dlx` and `npm exec`.
+
+- A command that matches a rule now asks (Claude Code, Cursor, pi) with a reason that ends in ``Confirm before it runs (rule `<id>`).``; Codex CLI, Cline, OpenCode and Kilo Code, which cannot ask, refuse it as before. The new setting `[commands] allow = ["git.reset-hard", ...]` switches single rules off; it never allows a protected write.
+
+- Added `protect.read_action` (`"block"` by default, or `"ask"`): with `"ask"`, a secret read asks the user instead of being refused, in agents that can ask. Fixed: a Claude Code `Read`/`Grep` call that should ask was allowed.
+- Added secret-read protection: the new setting `protect.read` lists paths the agent may not read (default `.env`, `.env.*` with the three `!` exceptions, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `secrets/**`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `.netrc`, `.pgpass`). Blocked: Claude Code `Read` and `Grep` (when `path` is a file), OpenCode and Kilo Code `read`, and in every agent's shell the readers (`cat`, `head`, `grep`, `sed`, `jq`, `base64`, ...), `< .env`, copies that carry the file elsewhere, uploads (`curl -d @file`, `-F x=@file`, `-T file`, `wget --post-file`), `openssl -in`/`-inkey`/`-key`, `perl -ne ... .env` and interpreter code that names a secret path. `source .env`, `. .env`, `set -a; . ./.env; set +a`, `--env-file .env`, `dotenv ...`, `wc`, `ls`, `stat` and `test -f` stay allowed, so the agent can use a secret without its contents reaching the model provider; printing the loaded variables in the same command line (`source .env && echo $API_KEY`, a bare `env`, `printenv`, `export -p`) is blocked when a printed variable's name looks secret (it contains `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH`, `URL`, `DSN` or similar), so `source .env; echo $PORT` stays allowed. The read tools of Cursor, Cline and pi are not wired (only their shell commands are checked), and `grep -r` over a directory that holds secrets is not caught.
+
+- Behaviour change: `cat .env` and similar reads were allowed and are now blocked by default. Set `protect.read = []` to turn this off.
+
+- Added self-protection: with `protect.own_files = true` (the default) agents may not write `.reflex.toml` (any depth), `.reflex/**`, `.claude/settings.json`, `.claude/settings.local.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.git/hooks/**`, `.clinerules/hooks/**`, the OpenCode, Kilo Code and pi plugin files, and the same user-scope files under the home directory.
+
+- Test gate: if the test command cannot run (spawn error, exit 126 or 127, or 9009 on Windows), the agent is no longer sent back to fix it; the user gets a note to check `tests.command`. Before, a missing test runner was treated as a test failure and the agent was sent back.
+
+- Test gate: if a fix attempt leaves exactly the same failure, the agent is stopped and the user is asked instead of using up the retry budget. Durations, thread ids in parentheses and hex addresses are ignored when comparing; counts and values are not.
+
+- Added `reflex check`: `reflex check "<command>"`, `--write PATH`, `--read PATH` (repeatable, combinable) and `--rules`. It prints ALLOW, ASK or BLOCK with the reason, using the project's `.reflex.toml`, and runs nothing. Exit code 0 is allow, 1 is ask, 2 is block, 3 means the check itself failed (bad arguments, unreadable settings).
+
+- The Claude Code `PreToolUse` matcher is now `Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep`. Run `reflex install` again to update an existing install; until then `reflex doctor` reports an install with the old matcher as not installed.
+
+- Added a corpus test (`crates/reflex-hooks/tests/guard_corpus.rs`) over 179 shell commands with the expected verdict for each (54 allow, 70 ask, 55 block), including incident shapes and a "known gaps" section (script files, variables, `eval` and base64, string concatenation in code, recursive `grep`). The golden test runners rewrite their expected output with `UPDATE_GOLDEN=1 cargo test`.
+
+- Docs: added `docs/comparison.md` (how Reflex Control compares with prove-it-mini, kora-agentgate and Claude Code's built-in controls, and what it does not do) and a record of a second live Claude Code run, `docs/evidence/claude-code-live-2026-10-22.md`. Updated the README and `docs/agent-hooks.md`.
+
 ## 0.5.0 - 2026-10-02
 
 - Added `reflex demo agent`: a styled walkthrough of six simulated agent steps (an edit, two protected writes, a force push, failing and then passing tests) with each decision taken by the real hook engine; no API key needed.

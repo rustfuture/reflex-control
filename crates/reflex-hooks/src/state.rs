@@ -16,12 +16,15 @@ const MAX_STATE_AGE: Duration = Duration::from_secs(14 * 24 * 3600);
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionState {
-    /// Times this session was sent back to fix failing tests since the last pass.
+    /// Times this session was sent back to fix failing tests since the last pass or
+    /// the last hand-over to the user.
     pub retries: u32,
     /// Fingerprint of the working tree at the last check.
     pub fingerprint: Option<String>,
     /// True if that check did not fail.
     pub last_ok: bool,
+    /// Fingerprint of the normalized test failure at that check, if it failed.
+    pub failure: Option<String>,
 }
 
 /// An untracked file, as far as the fingerprint cares.
@@ -135,6 +138,13 @@ pub fn fingerprint(diff: &str, untracked: &[UntrackedFile]) -> String {
     format!("{:016x}", h.0)
 }
 
+/// Fingerprint of a (normalized) test failure, to notice the same failure twice.
+pub fn failure_fingerprint(text: &str) -> String {
+    let mut h = Fnv::new();
+    h.write(text.as_bytes());
+    format!("{:016x}", h.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +164,8 @@ mod tests {
         let st = SessionState {
             retries: 2,
             fingerprint: Some("abc".into()),
-            last_ok: true,
+            last_ok: false,
+            failure: Some("f00d".into()),
         };
         save(tmp.path(), "s1", &st).unwrap();
         assert_eq!(load(tmp.path(), "s1"), st);

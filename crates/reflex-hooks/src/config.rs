@@ -18,11 +18,35 @@ pub const PROJECT_CONFIG_NAME: &str = ".reflex.toml";
 pub const DEFAULT_PROTECTED_PATHS: &[&str] = &[
     ".env",
     ".env.*",
+    "!.env.example",
+    "!.env.sample",
+    "!.env.template",
     "*.pem",
     "*.key",
     "secrets/**",
     ".github/workflows/**",
     "migrations/**",
+];
+
+/// Paths whose contents agents may not read, because reading sends them to the model
+/// provider. The agent can still use them without seeing them (`source .env`,
+/// `--env-file .env`).
+pub const DEFAULT_SECRET_PATHS: &[&str] = &[
+    ".env",
+    ".env.*",
+    "!.env.example",
+    "!.env.sample",
+    "!.env.template",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "secrets/**",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    ".netrc",
+    ".pgpass",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +81,26 @@ impl Scope {
 impl fmt::Display for Scope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// What happens when an agent tries to read a path in `protect.read`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReadAction {
+    /// Refuse the read.
+    #[default]
+    Block,
+    /// Ask the user, who can allow this one read. Agents that cannot ask refuse it.
+    Ask,
+}
+
+impl ReadAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReadAction::Block => "block",
+            ReadAction::Ask => "ask",
+        }
     }
 }
 
@@ -135,18 +179,36 @@ impl Default for AgentsConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProtectConfig {
+    /// Agents may not write to these paths.
     pub paths: Vec<String>,
+    /// Agents may not read these paths (secrets).
+    pub read: Vec<String>,
+    /// Whether a read of one of them is refused or asked about.
+    pub read_action: ReadAction,
+    /// Agents may not change `.reflex.toml` or the hook files `reflex install` writes.
+    pub own_files: bool,
+}
+
+fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|p| p.to_string()).collect()
 }
 
 impl Default for ProtectConfig {
     fn default() -> Self {
         Self {
-            paths: DEFAULT_PROTECTED_PATHS
-                .iter()
-                .map(|p| p.to_string())
-                .collect(),
+            paths: strings(DEFAULT_PROTECTED_PATHS),
+            read: strings(DEFAULT_SECRET_PATHS),
+            read_action: ReadAction::Block,
+            own_files: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CommandsConfig {
+    /// Destructive-command rule ids (e.g. `git.reset-hard`) that run without asking.
+    pub allow: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +263,7 @@ impl Default for GitConfig {
 pub struct Config {
     pub agents: AgentsConfig,
     pub protect: ProtectConfig,
+    pub commands: CommandsConfig,
     pub tests: TestsConfig,
     pub review: ReviewConfig,
     pub git: GitConfig,
@@ -309,16 +372,16 @@ fn toml_list(items: &[String]) -> String {
 
 /// Renders a config as commented TOML, the format the installer writes.
 pub fn render(cfg: &Config) -> String {
-    let paths = if cfg.protect.paths.len() > 3 {
-        let lines: Vec<String> = cfg
-            .protect
-            .paths
-            .iter()
-            .map(|p| format!("    {},", toml_str(p)))
-            .collect();
-        format!("[\n{}\n]", lines.join("\n"))
-    } else {
-        toml_list(&cfg.protect.paths)
+    let list = |items: &[String]| {
+        if items.len() > 3 {
+            let lines: Vec<String> = items
+                .iter()
+                .map(|p| format!("    {},", toml_str(p)))
+                .collect();
+            format!("[\n{}\n]", lines.join("\n"))
+        } else {
+            toml_list(items)
+        }
     };
     format!(
         "# Reflex Control settings. Edit and re-run `reflex install` to apply agent changes.\n\
@@ -329,8 +392,18 @@ pub fn render(cfg: &Config) -> String {
          \n\
          [protect]\n\
          # Agents may not write to these paths. Patterns without a `/` match the file\n\
-         # name at any depth; patterns with a `/` are relative to the project root.\n\
+         # name at any depth; patterns with a `/` are relative to the project root;\n\
+         # a leading `!` makes an exception.\n\
          paths = {paths}\n\
+         # Agents may not read these (their contents would go to the model provider).\n\
+         read = {read}\n\
+         read_action = {read_action} # \"block\" | \"ask\" (ask: the user can allow one read)\n\
+         # Agents may not edit .reflex.toml or the hook files `reflex install` wrote.\n\
+         own_files = {own_files}\n\
+         \n\
+         [commands]\n\
+         # Destructive-command rules that run without asking (see `reflex check --rules`).\n\
+         allow = {allow}\n\
          \n\
          [tests]\n\
          command = {command} # empty string = do not run tests\n\
@@ -344,7 +417,11 @@ pub fn render(cfg: &Config) -> String {
          run_tests = {run_tests}\n",
         enabled = toml_list(&cfg.agents.enabled),
         scope = toml_str(cfg.agents.scope.as_str()),
-        paths = paths,
+        paths = list(&cfg.protect.paths),
+        read = list(&cfg.protect.read),
+        read_action = toml_str(cfg.protect.read_action.as_str()),
+        own_files = cfg.protect.own_files,
+        allow = toml_list(&cfg.commands.allow),
         command = toml_str(&cfg.tests.command),
         on_failure = toml_str(cfg.tests.on_failure.as_str()),
         max_retries = cfg.tests.max_retries,
@@ -396,6 +473,14 @@ mod tests {
         assert!(msg.contains(".reflex.toml"), "{msg}");
         assert!(msg.contains("explode"), "{msg}");
         assert!(msg.contains("retry-then-ask"), "{msg}");
+    }
+
+    #[test]
+    fn read_action_parses_and_rejects_unknown_values() {
+        let cfg = Config::parse("[protect]\nread_action = \"ask\"\n", &origin()).unwrap();
+        assert_eq!(cfg.protect.read_action, ReadAction::Ask);
+        assert_eq!(Config::default().protect.read_action, ReadAction::Block);
+        assert!(Config::parse("[protect]\nread_action = \"maybe\"\n", &origin()).is_err());
     }
 
     #[test]

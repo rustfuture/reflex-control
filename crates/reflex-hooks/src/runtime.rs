@@ -12,8 +12,7 @@
 use crate::adapters::{self, HookEvent, Rendered};
 use crate::config::{self, Config, ConfigSource};
 use crate::guard::{
-    self, check_command_in_dir, check_paths, check_staged, decide_turn_end, PathPolicy,
-    TestOutcome, TurnEndInput, Verdict,
+    self, check_staged, decide_turn_end, Guard, PathPolicy, TestOutcome, TurnEndInput, Verdict,
 };
 use crate::install::Env;
 use crate::state::{self, SessionState, UntrackedFile};
@@ -110,12 +109,15 @@ fn evaluate(
 ) -> Result<Verdict, String> {
     let policy =
         |p: &Project| PathPolicy::new(&p.config.protect.paths, &p.root).map_err(|e| e.to_string());
+    let guard = |p: &Project| {
+        Guard::from_config(&p.config, &p.root, dirs::home_dir().as_deref())
+            .map_err(|e| e.to_string())
+    };
     match event {
         HookEvent::Ignore => Ok(Verdict::Allow),
-        HookEvent::PreWrite { paths } => Ok(check_paths(paths, &policy(project)?)),
-        HookEvent::PreShell { command } => {
-            Ok(check_command_in_dir(command, &policy(project)?, cwd))
-        }
+        HookEvent::PreWrite { paths } => Ok(guard(project)?.check_writes(paths)),
+        HookEvent::PreRead { paths } => Ok(guard(project)?.check_reads(paths)),
+        HookEvent::PreShell { command } => Ok(guard(project)?.check_command(command, cwd)),
         HookEvent::TurnEnd { session_id } => rt.turn_end(project, session_id),
         HookEvent::PreCommit => {
             let staged = rt.staged_files(project)?;
@@ -180,7 +182,7 @@ impl Runtime for SystemRuntime {
                     }
                     return Ok(Verdict::Allow);
                 }
-                let fp = state::fingerprint(&s.diff, &s.untracked);
+                let fp = tree_fingerprint(s, &project.config.tests.command);
                 if st.last_ok && st.fingerprint.as_deref() == Some(fp.as_str()) {
                     // Same tree as the last check, which did not fail.
                     return Ok(Verdict::Allow);
@@ -197,18 +199,37 @@ impl Runtime for SystemRuntime {
             run_tests(command, root, TURN_END_TEST_TIMEOUT)
         };
 
+        let failure = match &tests {
+            TestOutcome::Failed { output } => Some(state::failure_fingerprint(
+                &guard::normalize_failure(&guard::tail_lines(output, guard::OUTPUT_TAIL_LINES)),
+            )),
+            _ => None,
+        };
         let verdict = decide_turn_end(
             &TurnEndInput {
                 tests: tests.clone(),
                 diff_lines,
                 retries_so_far: st.retries,
+                same_failure_as_last: failure.is_some() && failure == st.failure,
             },
             &project.config,
         );
 
+        // Tests may leave files behind (reports, caches): remember the tree as they left
+        // it, so the next stop on an unchanged tree does not run them again.
+        let fingerprint = match (&tests, fingerprint) {
+            (TestOutcome::Passed | TestOutcome::Failed { .. }, Some(before)) => {
+                Snapshot::take(root)
+                    .map(|s| tree_fingerprint(&s, &project.config.tests.command))
+                    .or(Some(before))
+            }
+            (_, fp) => fp,
+        };
         st = SessionState {
             fingerprint,
-            last_ok: !matches!(tests, TestOutcome::Failed { .. }),
+            failure,
+            // A check that could not run is retried next time, in case it was fixed.
+            last_ok: matches!(tests, TestOutcome::Passed | TestOutcome::NotRun),
             retries: match verdict {
                 Verdict::RetryAgent { .. } => st.retries + 1,
                 _ => 0,
@@ -234,6 +255,12 @@ impl Runtime for SystemRuntime {
         eprintln!("reflex: running `{command}` before the commit...");
         Ok(run_tests(command, &project.root, PRE_COMMIT_TEST_TIMEOUT))
     }
+}
+
+/// Fingerprint of the tree and the test command (a changed command is a new check).
+fn tree_fingerprint(snapshot: &Snapshot, test_command: &str) -> String {
+    let keyed = format!("{}\n{}", test_command.trim(), snapshot.diff);
+    state::fingerprint(&keyed, &snapshot.untracked)
 }
 
 /// What `git` says about the working tree.
@@ -374,8 +401,8 @@ pub fn run_tests(command: &str, cwd: &Path, timeout: Duration) -> TestOutcome {
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            return TestOutcome::Failed {
-                output: format!("could not start `{command}`: {e}"),
+            return TestOutcome::CouldNotRun {
+                reason: format!("could not start `{command}`: {e}"),
             }
         }
     };
@@ -425,6 +452,16 @@ pub fn run_tests(command: &str, cwd: &Path, timeout: Duration) -> TestOutcome {
     }
     match status {
         Some(s) if s.success() => TestOutcome::Passed,
+        // 126: found but not executable; 127: not found; 9009: not found under cmd.exe.
+        Some(s) if !timed_out && matches!(s.code(), Some(126 | 127 | 9009)) => {
+            TestOutcome::CouldNotRun {
+                reason: format!(
+                    "`{command}` exited with {}, which means it was not found or could not \
+                     be started",
+                    s.code().unwrap_or_default()
+                ),
+            }
+        }
         _ => TestOutcome::Failed { output },
     }
 }
@@ -695,6 +732,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_missing_test_command_could_not_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let t = Duration::from_secs(30);
+        match run_tests("reflex-no-such-test-runner --all", tmp.path(), t) {
+            TestOutcome::CouldNotRun { reason } => assert!(reason.contains("127"), "{reason}"),
+            other => panic!("expected could-not-run, got {other:?}"),
+        }
+        match run_tests("echo hi; exit 126", tmp.path(), t) {
+            TestOutcome::CouldNotRun { .. } => {}
+            other => panic!("expected could-not-run, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_tests_stops_a_command_that_runs_too_long() {
         let tmp = tempfile::tempdir().unwrap();
         let started = Instant::now();
@@ -744,6 +796,81 @@ mod tests {
         }
 
         #[test]
+        fn the_same_failure_twice_hands_over_before_the_budget_is_used() {
+            let repo = repo_with_commit();
+            let root = repo.path();
+            let p = project(
+                root,
+                "echo 'test parse ... FAILED'; exit 1",
+                OnFailure::RetryThenAsk,
+            );
+            let rt = SystemRuntime;
+            sh(root, "echo two > a.txt");
+            assert!(matches!(
+                rt.turn_end(&p, "s").unwrap(),
+                Verdict::RetryAgent { .. }
+            ));
+            // The agent touched something, but the failure is unchanged.
+            sh(root, "echo three > a.txt");
+            let Verdict::AskHuman { reason } = rt.turn_end(&p, "s").unwrap() else {
+                panic!("expected ask-human");
+            };
+            assert!(reason.contains("same"), "{reason}");
+            assert_eq!(state::load(root, "s").retries, 0);
+        }
+
+        #[test]
+        fn a_fixed_test_command_runs_again_on_the_same_tree() {
+            let repo = repo_with_commit();
+            let root = repo.path();
+            sh(root, "echo two > a.txt");
+            let broken = project(root, "reflex-no-such-runner", OnFailure::RetryThenAsk);
+            assert!(matches!(
+                SystemRuntime.turn_end(&broken, "s").unwrap(),
+                Verdict::Notify { .. }
+            ));
+            // Same tree, the user fixed the command: the tests must run, and fail here.
+            let fixed = project(
+                root,
+                "echo 'test a ... FAILED'; exit 1",
+                OnFailure::RetryThenAsk,
+            );
+            assert!(matches!(
+                SystemRuntime.turn_end(&fixed, "s").unwrap(),
+                Verdict::RetryAgent { .. }
+            ));
+        }
+
+        #[test]
+        fn tests_that_write_files_do_not_rerun_on_every_stop() {
+            let repo = repo_with_commit();
+            let root = repo.path();
+            let outside = tempfile::tempdir().unwrap();
+            let log = outside.path().join("runs.log");
+            // The suite passes and leaves a report in the tree, as coverage tools do.
+            let cmd = format!("echo run >> {}; echo report > coverage.txt", log.display());
+            let p = project(root, &cmd, OnFailure::RetryThenAsk);
+            sh(root, "echo two > a.txt");
+            assert_eq!(SystemRuntime.turn_end(&p, "s").unwrap(), Verdict::Allow);
+            assert_eq!(SystemRuntime.turn_end(&p, "s").unwrap(), Verdict::Allow);
+            let runs = std::fs::read_to_string(&log).unwrap().lines().count();
+            assert_eq!(runs, 1, "the unchanged tree was tested again");
+        }
+
+        #[test]
+        fn a_test_command_that_cannot_run_lets_the_agent_stop() {
+            let repo = repo_with_commit();
+            let root = repo.path();
+            let p = project(root, "reflex-no-such-runner", OnFailure::RetryThenAsk);
+            sh(root, "echo two > a.txt");
+            let Verdict::Notify { message } = SystemRuntime.turn_end(&p, "s").unwrap() else {
+                panic!("expected notify");
+            };
+            assert!(message.contains("could not run"), "{message}");
+            assert_eq!(state::load(root, "s").retries, 0);
+        }
+
+        #[test]
         fn turn_end_flow_on_a_real_repository() {
             let repo = repo_with_commit();
             let root = repo.path();
@@ -751,8 +878,12 @@ mod tests {
             // run would (correctly) change the fingerprint too.
             let outside = tempfile::tempdir().unwrap();
             let counter = outside.path().join("runs.log");
-            // The "test suite" records each run and fails while `fail` exists.
-            let cmd = format!("echo run >> {}; test ! -e fail", counter.display());
+            // The "test suite" records each run and fails while `fail` exists, with output
+            // that differs per run (so the agent does not look stuck).
+            let cmd = format!(
+                "echo run >> {log}; test ! -e fail || {{ echo \"failure $(wc -l < {log})\"; exit 1; }}",
+                log = counter.display()
+            );
             let p = project(root, &cmd, OnFailure::RetryThenAsk);
             let rt = SystemRuntime;
             let runs = || std::fs::read_to_string(&counter).map_or(0, |t| t.lines().count());

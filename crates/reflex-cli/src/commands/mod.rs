@@ -1,6 +1,7 @@
 pub mod agent_demo;
 pub mod benchmark;
 pub mod calibrate;
+pub mod check;
 pub mod demo;
 pub mod doctor;
 pub mod experiment;

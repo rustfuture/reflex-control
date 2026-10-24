@@ -1,1 +1,1 @@
-{"permission":"ask","user_message":"Reflex Control: this command recursively deletes a broad target. Confirm before it runs.","agent_message":"Reflex Control: this command recursively deletes a broad target. Confirm before it runs."}
+{"permission":"ask","user_message":"Reflex Control: this command recursively deletes a broad target. Confirm before it runs (rule `fs.rm-rf-broad`).","agent_message":"Reflex Control: this command recursively deletes a broad target. Confirm before it runs (rule `fs.rm-rf-broad`)."}

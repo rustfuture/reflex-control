@@ -12,9 +12,11 @@ Reflex Control is a hook that stops AI coding agents from touching protected fil
 
 ![Reflex Control guarding a simulated coding agent: two protected files, a force push and failing tests](docs/demo/agent.gif)
 
-- Blocks edits and shell writes to paths you protect (by default `.env`, `.env.*`, `*.pem`, `*.key`, `secrets/**`, `.github/workflows/**`, `migrations/**`).
-- Asks you before risky shell commands such as `git push --force`.
-- Runs your test command when the agent says it is done; if the tests fail it sends the output back to the agent (2 retries by default), then asks you.
+- Blocks edits and shell writes to paths you protect (by default `.env`, `.env.*`, `*.pem`, `*.key`, `secrets/**`, `.github/workflows/**`, `migrations/**`; `.env.example` stays editable). It also catches `ln`, `curl -o`, `git checkout <file>`, `python -c` one-liners and heredocs.
+- Blocks reads of secret files (`.env`, keys, `.netrc`, ...) so their contents do not reach the model provider. The agent can still use them: `source .env` and `--env-file .env` work ([secret reads](#secret-reads)).
+- Asks you before destructive commands: 22 rules with stable ids, from `git reset --hard` and `rm -rf ~` to `DROP TABLE`, `terraform destroy` and HTTP `DELETE` requests ([destructive commands](#destructive-commands)).
+- Stops the agent from editing Reflex Control's own settings and hook files ([self-protection](#self-protection)).
+- Runs your test command when the agent says it is done; if the tests fail it sends the output back to the agent (2 retries by default), then asks you. It asks you early if a fix attempt leaves exactly the same failure, and it does not send the agent back if the test command cannot run.
 - Installs into Claude Code, Cursor, Codex CLI, OpenCode, Kilo Code, Cline and pi with `reflex install` ([which ones ran in a real session](#agent-hooks)).
 - Ships the decision library underneath: a policy that decides whether a task can finish, retry or escalate to a larger model, with calibration sweeps and SQLite telemetry ([how it works](#how-it-works)).
 
@@ -94,13 +96,84 @@ cargo run --bin reflex -- run --provider jev \
 
 | Agent | Status |
 | :--- | :--- |
-| Claude Code | Run in a real Claude Code session: protected writes were refused and failing tests sent the agent back ([record](docs/evidence/claude-code-live-2026-10-02.md)) |
+| Claude Code | Run in real Claude Code sessions. 2026-10-02: protected writes were refused and failing tests sent the agent back ([record](docs/evidence/claude-code-live-2026-10-02.md)). 2026-10-22: reads of `.env`, a Python write to `.env` and an edit of `.reflex.toml` were denied, `git reset --hard` hit rule `git.reset-hard`, and a canary secret appeared 0 times in the transcript ([record](docs/evidence/claude-code-live-2026-10-22.md)) |
 | Cursor | Built from secondary descriptions of Cursor's hooks; not run in a real session |
 | Codex CLI | Checked against the Codex source; not run in a real session |
 | OpenCode | Checked against the OpenCode source; not run in a real session |
 | Kilo Code | Checked against the Kilo source; not run in a real session |
 | Cline | Checked against the Cline source; not run in a real session |
 | pi | Checked against the pi source; not run in a real session |
+
+### Secret reads
+
+An agent's reads go to the model provider. `protect.read` lists files it may not read. The default list is `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `secrets/**`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `.netrc` and `.pgpass`. `.env.example`, `.env.sample` and `.env.template` stay readable.
+
+The agent can use a secret without reading it:
+
+```text
+allowed:  source .env    set -a; . ./.env; set +a    docker compose --env-file .env up    wc -l .env
+blocked:  cat .env    grep KEY .env    base64 < .env    cp .env /tmp/x    curl -d @.env URL    python3 -c "open('.env')..."
+```
+
+Blocked in every agent's shell: readers such as `cat`, `head`, `grep`, `sed`, `jq` and `base64`, input redirection, copies that carry the file elsewhere, uploads, `openssl -in`, and interpreter code that names a secret path. Also blocked, as tool calls: Claude Code `Read` and `Grep` (when `path` is a file), and OpenCode and Kilo Code `read`.
+
+Not covered: the read tools of Cursor, Cline and pi (only their shell commands are checked), and `grep -r` over a directory that holds secrets. Loading a secret and printing it in the same command (`source .env && echo $API_KEY`) is blocked; printing it in a later, separate command is not seen. Details: [docs/agent-hooks.md](docs/agent-hooks.md#secret-reads).
+
+To decide case by case instead, set `read_action = "ask"` under `[protect]`: Claude Code and Cursor then ask you before a secret read, and you can allow that one read. Agents that cannot ask still refuse it. A protected write is always blocked.
+
+### Destructive commands
+
+A catalog of 22 rules, each with a stable id such as `git.reset-hard`, `fs.rm-rf-broad`, `db.sql`, `container.prune`, `k8s.delete`, `iac.destroy`, `cloud.delete` and `http.delete`. A match asks you first (Claude Code, Cursor, pi); the reason ends with the rule id. Wrappers such as `sudo`, `env`, `npx` and `uv run` are seen through. Agents that cannot ask (Codex CLI, Cline, OpenCode, Kilo Code) refuse the command.
+
+```bash
+reflex check --rules     # list every rule and which ones this project allows
+```
+
+To stop asking for one rule, add its id to `.reflex.toml`. This never allows a write to a protected path:
+
+```toml
+[commands]
+allow = ["git.reset-hard"]
+```
+
+### Check a command without running it
+
+`reflex check` prints what the hooks would decide, using the project's `.reflex.toml`. It runs nothing. Exit code 0 is allow, 1 is ask, 2 is block.
+
+```text
+$ reflex check "git reset --hard"
+ASK    command: git reset --hard
+       this command throws away uncommitted changes (git reset --hard). Confirm before it runs (rule `git.reset-hard`).
+
+$ reflex check --write .env --read README.md
+BLOCK  write:   .env
+       ...
+ALLOW  read:    README.md
+```
+
+You can combine a command, `--write PATH` and `--read PATH` (the last two can be repeated). More in [docs/agent-hooks.md](docs/agent-hooks.md#reflex-check).
+
+### Self-protection
+
+An agent that can edit Reflex Control's settings can switch the guard off. With `protect.own_files = true` (the default) agents may not write `.reflex.toml`, `.reflex/**`, `.claude/settings.json`, `.claude/settings.local.json`, `.cursor/hooks.json`, `.codex/hooks.json`, `.git/hooks/**`, `.clinerules/hooks/**` or the OpenCode, Kilo Code and pi plugin files, and the matching user-level files under your home directory. Make those changes yourself. This also stops an agent from changing other settings in `.claude/settings.json`; set `protect.own_files = false` to turn the check off.
+
+## How it compares
+
+Reflex Control is a second layer, not a replacement for a sandbox. The table was written on 2026-10-22 from each project's public description; sources, dates and the gaps are in [docs/comparison.md](docs/comparison.md). "Not checked" means the sources do not say, not that the feature is missing.
+
+| | Reflex Control | prove-it-mini, kora-agentgate | Claude Code built-in |
+| :--- | :--- | :--- | :--- |
+| Protected writes | Yes: path patterns with exceptions; edit tools and shell | No | Permission deny rules; the sandbox covers Bash |
+| Secret reads | Yes: read tools in Claude Code, OpenCode and Kilo Code; shell commands in all | No | `Read(.env)` deny rules; sandbox `denyRead` |
+| Destructive-command coverage | 22 rules, always on | No | Auto mode classifier; permission rules |
+| Interpreter one-liners, heredocs | Yes, by heuristic | No | The sandbox covers child processes |
+| Test gate at stop | Yes | **Yes: this is what they do** | No (write your own Stop hook) |
+| Stuck-agent detection | Yes: same failure twice | Not checked | No test gate |
+| Self-protection of own config | Yes | Not checked | Not checked |
+| Explain or dry-run CLI | `reflex check` | Not checked | Not checked |
+| Agents supported | 7, plus a git pre-commit hook | Claude Code | Claude Code |
+
+prove-it-mini and kora-agentgate do one thing, block "done" while tests fail. Reflex Control's installer keeps hooks that are already in place. For hard allow and deny rules, Anthropic's hooks documentation recommends the Claude Code permission system, so use deny rules and the sandbox for those and Reflex Control for the rest.
 
 ## How it works
 
@@ -253,6 +326,7 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 - **Synthetic fixtures:** Fixture datasets in [`fixtures/`](fixtures/) are synthetic scenarios generated via `docs/experiments/generate_v2_datasets.py` with fixed random seeds. They establish held-out split disjointness and threshold behavior under controlled conditions, not generalization to arbitrary production multi-tenant agent workloads.
 - **Provider differences:** Offline evaluation via `--provider mock` uses deterministic heuristics and does not evaluate prompt language or contextual semantics. Live semantic evaluations require the TypeSafe Jev API (`JEV_API_KEY`), which introduces external network latency and minor sampling variation between runs.
 - **Statistical bounds:** Zero observed false accepts or frontier misses on a 40-task or 100-task split indicate that no errors occurred in that sample, but statistical confidence bounds (e.g., Wilson intervals up to 8.2%–11.0%) reflect sample-size limits; zero observed errors do not establish zero risk.
+- **Hook checks are heuristics:** The shell check reads command text. It does not run the command, expand variables or read script files, so it is a guard rail against mistakes, not a sandbox. Only Claude Code has been run in real sessions (headless, one model); the other agents are checked against source code or secondary descriptions. Limits per agent: [docs/agent-hooks.md](docs/agent-hooks.md).
 - **Cost estimates:** Dollar savings and latency figures in demonstrations and synthetic benchmarks are calculated against assumed baseline costs ($0.02 / 1,800 ms per frontier call), not measured production bills.
 
 ---
@@ -263,7 +337,7 @@ All fixture datasets and frozen policies reside in [`fixtures/`](fixtures/):
 cargo test --workspace --all-targets
 ```
 
-The test suite covers decision logic, security veto rules, threshold calibration, telemetry persistence, API integrations, and fixture split integrity.
+The test suite covers decision logic, security veto rules, threshold calibration, telemetry persistence, API integrations, and fixture split integrity. The hooks also run against a corpus of 188 shell commands with the expected verdict for each ([`guard_corpus.tsv`](crates/reflex-hooks/tests/fixtures/guard_corpus.tsv)), including a list of known gaps, a metamorphic test (rewrites that do not change a command must not change its verdict), a bypass matrix of the same dangerous act written another way ([`bypass_matrix.tsv`](crates/reflex-hooks/tests/fixtures/bypass_matrix.tsv)) and an adapter parity test. [docs/validation.md](docs/validation.md) reports what these measure, the hook's latency, and what happens on real agent traffic.
 
 ---
 

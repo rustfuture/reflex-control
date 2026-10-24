@@ -1,0 +1,134 @@
+# Bypass matrix: the same dangerous act written another way, plus near-miss commands
+# that must still pass. One case per line:
+#
+#   <class> TAB <caught|gap|safe> TAB <command>
+#
+# caught = must stop (ask or block); gap = known blind spot that must still pass (a fix
+# flips it and this test says to move the line); safe = a harmless look-alike that must
+# stay allowed. `\n` in a command is a newline. Sections are not marked with `#` lines
+# so the class column is the only grouping.
+path	caught	\rm -rf /
+path	caught	/bin/rm -rf /
+path	caught	command rm -rf /
+path	caught	env FOO=1 rm -rf /
+path	caught	timeout 5 rm -rf /
+path	caught	nice -n 10 rm -rf /
+path	caught	nohup rm -rf /
+path	caught	sudo -u deploy rm -rf /
+options	caught	rm -r -f /
+options	caught	rm --recursive --force /
+options	caught	rm -fr /
+options	caught	rm -Rf /
+options	caught	rm -rf -- /
+separators	caught	true && rm -rf /
+separators	caught	true; rm -rf /
+separators	caught	true || rm -rf /
+separators	caught	echo hi\nrm -rf /
+separators	caught	(rm -rf /)
+shell	caught	bash -c 'rm -rf /'
+shell	caught	sh -c "rm -rf /"
+shell	caught	bash -lc 'rm -rf /'
+shell	caught	zsh -c 'rm -rf /'
+shell	caught	bash -c "bash -c 'rm -rf /'"
+shell	caught	eval 'rm -rf /'
+shell	caught	eval "git push --force"
+shell	gap	eval "$(echo cm0gLXJmIC8= | base64 -d)"
+git	caught	git push --force origin main
+git	caught	git push -f
+git	caught	git push -fu origin main
+git	caught	git push --mirror origin
+git	caught	git push --prune origin
+git	caught	git push origin +main
+git	caught	git push origin :release
+git	caught	git -C repo push --force
+git	caught	git --git-dir=.git push -f
+git	caught	git -C repo reset --hard HEAD~1
+git	caught	git reset --hard origin/main
+git	caught	git clean -fdx
+git	caught	git checkout -- .
+git	caught	git restore .
+git	caught	git reflog expire --expire=now --all
+git	caught	git update-ref -d refs/heads/main
+git	caught	git filter-branch --force --all
+sql	caught	psql -c 'DROP TABLE users'
+sql	caught	psql "$DATABASE_URL" -c "drop table users"
+sql	caught	psql <<'EOF'\nDROP TABLE users;\nEOF
+sql	caught	echo 'DROP TABLE users;' | psql
+sql	caught	mysql -e "DELETE FROM users"
+sql	caught	mongosh --eval "db.users.drop()"
+sql	caught	sqlite3 app.db "DELETE FROM users"
+sql	caught	docker exec -i db psql -U app -c "DROP TABLE users"
+secret	caught	cat ./.env
+secret	caught	head .env
+secret	caught	tail -n 5 .env
+secret	caught	less .env
+secret	caught	strings server.key
+secret	caught	xxd .env
+secret	caught	sed -n 1p .env
+secret	caught	awk '{print}' .env
+secret	caught	nl .env
+secret	caught	grep -i password .env
+secret	caught	cp .env /tmp/x
+secret	caught	base64 .env
+secret	caught	tar cf - .env
+secret	caught	tar czf /tmp/x.tgz .env
+secret	caught	zip /tmp/x.zip .env
+secret	caught	gzip -c .env > /tmp/x.gz
+secret	caught	git diff .env
+secret	caught	git show HEAD:.env
+secret	caught	git log -p -- .env
+secret	caught	python3 -c "print(open('./.env').read())\"
+secret	gap	grep -r PASSWORD .
+secret	gap	git diff .
+write	caught	echo x >> .env
+write	caught	cat x > .env
+write	caught	printf x | tee -a .env
+write	caught	install -m 600 /tmp/x .env
+write	caught	dd if=/tmp/x of=.env
+write	caught	sed -i.bak 's/a/b/' .env
+write	caught	perl -pi -e 's/a/b/' .env
+write	caught	truncate -s0 .env
+write	caught	cp /tmp/x .env/../.env
+write	caught	ln -sf /tmp/x .env
+write	caught	echo x > ./.env
+write	caught	chmod 000 .env
+write	caught	mv .env .env.old
+write	caught	shred -u .env
+cloud	caught	kubectl -n prod delete namespace prod
+cloud	caught	helm uninstall api -n production
+cloud	caught	terraform -chdir=infra destroy -auto-approve
+cloud	caught	aws s3 rm s3://b --recursive
+cloud	caught	docker compose -f docker-compose.yml down -v
+cloud	caught	docker system prune -af --volumes
+http	caught	curl -XDELETE https://api/x
+http	caught	curl --request DELETE https://api/x
+http	caught	curl -X 'DELETE' https://api/x
+find	caught	find / -delete
+find	caught	find / -exec rm -rf {} +
+find	caught	find ~ -exec rm -f {} +
+find	gap	echo / | xargs rm -rf
+find	gap	echo / | xargs -I{} rm -rf {}
+variable	caught	rm -rf $HOME
+variable	gap	F=/; rm -rf "$F"
+variable	gap	X=rm; $X -rf /
+variable	gap	rm -rf $(pwd)
+windows	caught	Remove-Item -Recurse -Force C:\
+windows	caught	rmdir /s /q d:\
+safe	safe	rm -rf node_modules dist target
+safe	safe	git push origin feature/login
+safe	safe	git push --force-with-lease origin feature/login
+safe	safe	git diff .env.example
+safe	safe	tar czf src.tgz src
+safe	safe	git log --oneline -5
+safe	safe	git show HEAD:README.md
+safe	safe	find . -name '*.pyc' -delete
+safe	safe	kubectl delete pod web-7d9f
+safe	safe	docker compose down
+safe	safe	cat .env.example
+safe	safe	grep -rn TODO src/
+safe	safe	psql -c "SELECT 1"
+safe	safe	eval "$(ssh-agent)"
+safe	safe	rm -rf .github
+safe	safe	git status --short .env
+safe	safe	wc -l .env
+safe	safe	psql "$DATABASE_URL" -c "DELETE FROM sessions WHERE id=1"

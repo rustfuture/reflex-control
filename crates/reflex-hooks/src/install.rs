@@ -454,7 +454,10 @@ mod tests {
         let settings: serde_json::Value =
             serde_json::from_str(p.changes[1].after.as_deref().unwrap()).unwrap();
         let pre = &settings["hooks"]["PreToolUse"][0];
-        assert_eq!(pre["matcher"], "Edit|Write|MultiEdit|NotebookEdit|Bash");
+        assert_eq!(
+            pre["matcher"],
+            "Edit|Write|MultiEdit|NotebookEdit|Bash|Read|Grep"
+        );
         assert_eq!(
             pre["hooks"][0]["command"],
             "reflex hook claude-code pre-tool"

@@ -1,0 +1,1 @@
+{"action":"block","reason":"Reflex Control: this tool call reads `/work/proj/.env`, which holds secrets (matches `.env`); its contents would be sent to the model provider. Use it without reading it, for example `set -a; source .env; set +a` or `--env-file .env`, or ask the user. To allow it, the user can edit `protect.read` in .reflex.toml."}
